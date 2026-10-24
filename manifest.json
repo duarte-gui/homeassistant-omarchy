@@ -1,0 +1,109 @@
+{
+  "schemaVersion": 1,
+  "id": "io.github.duarte-gui.ha-overview",
+  "name": "HA Overview",
+  "version": "0.1.0",
+  "author": "duarte-gui",
+  "license": "MIT",
+  "description": "Your Home Assistant dashboards in the Omarchy bar: click the icon and the dashboard drops down, drawn natively card by card, with every switch, slider, thermostat, alarm keypad and camera working live.",
+  "kinds": [
+    "bar-widget"
+  ],
+  "entryPoints": {
+    "barWidget": "BarWidget.qml"
+  },
+  "barWidget": {
+    "displayName": "HA Overview",
+    "description": "A Home Assistant dashboard one click away. Pick which dashboards the dropdown lists, switch views with tabs, and control lights, switches, covers, climate, media, locks, alarms and cameras without opening a browser. State changes arrive live over Home Assistant's websocket.",
+    "category": "System",
+    "aliases": [
+      "homeassistant",
+      "home assistant",
+      "hass",
+      "dashboard",
+      "smart home"
+    ],
+    "allowMultiple": false,
+    "defaultSection": "right",
+    "defaults": {
+      "haUrl": "http://homeassistant.local:8123",
+      "token": "",
+      "dashboards": "",
+      "columns": 2,
+      "panelWidth": 760,
+      "panelHeight": 860,
+      "cameraRefreshSec": 10,
+      "notifyErrors": true
+    },
+    "schema": [
+      {
+        "key": "haUrl",
+        "type": "string",
+        "label": "Home Assistant address",
+        "defaultValue": "http://homeassistant.local:8123",
+        "description": "Where Home Assistant is: an IP such as 192.168.0.10, a hostname, or a full URL. A bare IP or hostname gets Home Assistant's port 8123. The gear button in the panel edits it."
+      },
+      {
+        "key": "token",
+        "type": "string",
+        "label": "Access token",
+        "defaultValue": "",
+        "description": "A long-lived access token, created in Home Assistant under your profile, Security. It is only ever sent to Home Assistant, over stdin to the bridge process, never in a command line. The gear button in the panel takes it."
+      },
+      {
+        "key": "dashboards",
+        "type": "string",
+        "label": "Dashboards in the dropdown",
+        "defaultValue": "",
+        "description": "Comma-separated dashboard url_paths, for example lovelace, dashboard-energy. Empty lists every dashboard Home Assistant has. The gear button in the panel writes this for you."
+      },
+      {
+        "key": "columns",
+        "type": "integer",
+        "label": "Columns",
+        "min": 1,
+        "max": 3,
+        "step": 1,
+        "defaultValue": 2,
+        "description": "How many columns the cards are laid out in. A panel view always uses one."
+      },
+      {
+        "key": "panelWidth",
+        "type": "integer",
+        "label": "Panel width (px)",
+        "min": 360,
+        "max": 1600,
+        "step": 20,
+        "defaultValue": 760,
+        "description": "Width of the dropdown. It never grows past the screen."
+      },
+      {
+        "key": "panelHeight",
+        "type": "integer",
+        "label": "Panel height cap (px)",
+        "min": 300,
+        "max": 2000,
+        "step": 20,
+        "defaultValue": 860,
+        "description": "The tallest the dropdown gets before it scrolls."
+      },
+      {
+        "key": "cameraRefreshSec",
+        "type": "integer",
+        "label": "Camera refresh (seconds)",
+        "min": 2,
+        "max": 120,
+        "step": 1,
+        "defaultValue": 10,
+        "description": "How often camera pictures are refreshed. Only runs while the panel is open."
+      },
+      {
+        "key": "notifyErrors",
+        "type": "boolean",
+        "label": "Notify failed actions",
+        "defaultValue": true,
+        "description": "When a keybinding or IPC call fails while the panel is closed, say so with a desktop notification."
+      }
+    ]
+  }
+}
