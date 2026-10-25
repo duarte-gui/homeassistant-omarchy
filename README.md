@@ -43,8 +43,14 @@ Then right click the bar icon (or press `s` in the panel) and fill in:
 3. **Dashboards in the dropdown** — every dashboard is listed until you untick
    one.
 
-Requirements: `python3` (standard library only) for the websocket bridge, and
+Requirements: `python3` (standard library only) for the websocket bridge,
+`python-gobject` for error toasts (both ship with Omarchy), and
 `mpv` if you want live camera streams.
+
+To remove it, `omarchy plugin remove io.github.duarte-gui.ha-overview`, or
+`./install.sh --uninstall` from the clone. Either disables the widget first.
+If the widget's entry is still in `~/.config/omarchy/shell.json` afterwards,
+delete it there too: it holds your access token.
 
 ## Using it
 

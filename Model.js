@@ -40,10 +40,6 @@ function titleCase(value) {
   return text.charAt(0).toUpperCase() + text.slice(1)
 }
 
-function shellQuote(value) {
-  return "'" + String(value === undefined || value === null ? "" : value).replace(/'/g, "'\\''") + "'"
-}
-
 function domainOf(entityId) {
   var text = String(entityId || "")
   var dot = text.indexOf(".")

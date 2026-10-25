@@ -2,7 +2,7 @@
   "schemaVersion": 1,
   "id": "io.github.duarte-gui.ha-overview",
   "name": "HA Overview",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "author": "duarte-gui",
   "license": "MIT",
   "description": "Your Home Assistant dashboards in the Omarchy bar: click the icon and the dashboard drops down, drawn natively card by card, with every switch, slider, thermostat, alarm keypad and camera working live.",

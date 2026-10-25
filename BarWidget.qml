@@ -93,7 +93,8 @@ BarWidget {
       url += "/" + item.currentDashboard
       if (item.currentView) url += "/" + item.currentView.path
     }
-    if (bar) bar.run("xdg-open " + Model.shellQuote(url))
+    // In-process (the desktop portal, or xdg-open): no shell line naming the view.
+    Qt.openUrlExternally(url)
   }
 
   function openSetup() {

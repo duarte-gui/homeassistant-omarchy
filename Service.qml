@@ -111,6 +111,8 @@ Item {
 
   readonly property string bridgeScript:
     decodeURIComponent(String(Qt.resolvedUrl("bridge.py")).replace(/^file:\/\//, ""))
+  readonly property string notifyScript:
+    decodeURIComponent(String(Qt.resolvedUrl("notify.py")).replace(/^file:\/\//, ""))
 
   onHaUrlChanged: reconnect()
   onTokenChanged: reconnect()
@@ -290,9 +292,64 @@ Item {
     lastCallError = message
     console.warn("ha-overview: " + message)
     // An IPC call or a keybinding has nowhere else to say it failed.
-    if (notifyErrors && !panelOpen)
-      Quickshell.execDetached(["omarchy-notification-send", "--app-name", "HA Overview", "-u", "normal",
-        "-g", "󰟐", "HA Overview", message])
+    if (notifyErrors && !panelOpen) toast(message)
+  }
+
+  // Every toast goes through notify.py, which reads it as one JSON line on
+  // stdin and calls Notify over D-Bus itself. omarchy-notification-send would
+  // put "Front door: unlock failed" into its own argv and then busctl's, and
+  // any local account can read a process's arguments through /proc.
+  property var toastQueue: []
+
+  function toast(body) {
+    var next = toastQueue.slice()
+    next.push({
+      app: "HA Overview",
+      glyph: "󰟐",
+      summary: "HA Overview",
+      body: String(body || ""),
+      urgency: "normal",
+      exec: ["omarchy-shell", "-q", "hass", "open"]
+    })
+    toastQueue = next
+    if (!toastProcess.running) sendNextToast()
+  }
+
+  function sendNextToast() {
+    if (toastQueue.length === 0) return
+    toastProcess.note = toastQueue[0]
+    toastQueue = toastQueue.slice(1)
+    toastProcess.stdinEnabled = true
+    toastProcess.running = true
+  }
+
+  Process {
+    id: toastProcess
+    running: false
+    command: ["python3", "-I", service.notifyScript]
+
+    property var note: null
+
+    onStarted: {
+      write(JSON.stringify(note) + "\n")
+      stdinEnabled = false
+    }
+
+    onExited: function(exitCode) {
+      // python-gobject missing, or no notification daemon answering. A toast
+      // that says nothing is still worth more than none, and it is the only
+      // kind that may travel as arguments.
+      if (exitCode !== 0) {
+        console.warn("ha-overview: notify.py failed (" + exitCode + "), sending a generic toast")
+        Quickshell.execDetached([
+          "omarchy-notification-send", "--app-name", "HA Overview", "-u", "normal",
+          "-g", "󰟐", "HA Overview", "An action failed",
+          "--exec", "omarchy-shell", "-q", "hass", "open"
+        ])
+      }
+      note = null
+      Qt.callLater(service.sendNextToast)
+    }
   }
 
   // -------------------------------------------------------------- inbound

@@ -41,6 +41,11 @@ import urllib.parse
 STATE_BATCH_SEC = 0.25
 PING_EVERY_SEC = 30
 BACKOFF = [1, 2, 5, 10, 30]
+# The largest message accepted from Home Assistant. A big install's full state
+# dump is a few MB; anything past this is a broken or hostile server, and the
+# connection is dropped before the frame is buffered.
+MAX_MESSAGE = 64 * 1024 * 1024
+MAX_HANDSHAKE = 64 * 1024
 
 out_lock = threading.Lock()
 
@@ -114,6 +119,8 @@ class WebSocket:
 
         head = b""
         while b"\r\n\r\n" not in head:
+            if len(head) > MAX_HANDSHAKE:
+                raise Closed("handshake too large")
             chunk = self.sock.recv(4096)
             if not chunk:
                 raise Closed("handshake closed")
@@ -160,6 +167,8 @@ class WebSocket:
                 size = struct.unpack("!H", self._read(2))[0]
             elif size == 127:
                 size = struct.unpack("!Q", self._read(8))[0]
+            if len(message) + size > MAX_MESSAGE:
+                raise Closed("message over %d bytes" % MAX_MESSAGE)
             mask = self._read(4) if b1 & 0x80 else None
             payload = self._read(size)
             if mask:

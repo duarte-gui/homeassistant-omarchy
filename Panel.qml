@@ -207,7 +207,7 @@ Panel {
     if (text === "") return
     // A path inside Home Assistant, as HA's own url actions allow.
     if (text.charAt(0) === "/" && service) text = service.haUrl + text
-    if (bar) bar.run("xdg-open " + Model.shellQuote(text))
+    Qt.openUrlExternally(text)
   }
 
   function flash(text) {
@@ -240,7 +240,6 @@ Panel {
       }
       streamProcess.running = false
       streamProcess.url = service.pictureUrl(result.url)
-      streamProcess.title = Model.entityName(entityId, service.stateOf(entityId, service.stateRevision), "")
       streamProcess.stdinEnabled = true
       streamProcess.running = true
     })
@@ -249,8 +248,8 @@ Panel {
   Process {
     id: streamProcess
     property string url: ""
-    property string title: ""
-    command: ["mpv", "--playlist=-", "--title=" + title, "--wayland-app-id=ha-overview-camera",
+    // A fixed title: the camera's name would sit in argv, readable by anyone.
+    command: ["mpv", "--playlist=-", "--title=HA Overview camera", "--wayland-app-id=ha-overview-camera",
       "--force-window=immediate", "--keepaspect", "--profile=low-latency", "--no-audio"]
     stdinEnabled: true
     onStarted: {
