@@ -13,10 +13,11 @@ import "Model.js" as Model
 // and is asked for again well before it lapses. Tiles are plain Images on a
 // Web Mercator grid — no QtLocation, which the shell does not ship.
 //
-// In a dark theme the tiles go dark too: a shader inverts their lightness and
-// keeps their hue, as Home Assistant's frontend does, over the panel's colour.
+// In a dark theme the tiles go dark too: a shader inverts their lightness, as
+// Home Assistant's frontend does, and greys them over the panel's colour.
 //
-// Drag to pan; the wheel, a double click or the buttons zoom.
+// Drag to pan; the wheel, a double click or the buttons zoom. The names along
+// the bottom fly the map to each person.
 Item {
   id: view
 
@@ -75,6 +76,14 @@ Item {
     centerX = ax * factor - (px - width / 2) / tileSize
     centerY = ay * factor - (py - height / 2) / tileSize
     zoom = next
+    userMoved = true
+  }
+
+  // Centre on one marker, close enough to see the street it is on.
+  function focusOn(marker) {
+    zoom = Math.max(zoom, 16)
+    centerX = Model.tileX(marker.lon, zoom)
+    centerY = Model.tileY(marker.lat, zoom)
     userMoved = true
   }
 
@@ -354,15 +363,55 @@ Item {
     }
   }
 
+  // ---- one chip per person or tracker: click to go to them
+  Flow {
+    anchors.left: parent.left
+    anchors.bottom: parent.bottom
+    anchors.margins: Style.spacing.md
+    width: parent.width - credit.width - Style.spacing.md * 3
+    spacing: Style.spacing.xs
+    layoutDirection: Qt.LeftToRight
+
+    Repeater {
+      model: view.markers.filter(function(m) { return m.kind === "marker" })
+      Rectangle {
+        required property var modelData
+        width: chipText.implicitWidth + Style.spacing.md * 2
+        height: chipText.implicitHeight + Style.spacing.xs * 2
+        radius: height / 2
+        color: chipMouse.containsMouse ? Qt.rgba(0, 0, 0, 0.75) : Qt.rgba(0, 0, 0, 0.55)
+        border.width: 1
+        border.color: modelData.active ? view.accent : "transparent"
+        Text {
+          id: chipText
+          anchors.centerIn: parent
+          text: Model.glyph("mdi:crosshairs-gps") + " " + modelData.name
+          font.family: view.fontFamily
+          font.pixelSize: Style.font.caption
+          color: "white"
+        }
+        MouseArea {
+          id: chipMouse
+          anchors.fill: parent
+          hoverEnabled: true
+          cursorShape: Qt.PointingHandCursor
+          onClicked: view.focusOn(modelData)
+          PanelToolTip { visible: chipMouse.containsMouse; text: "Go to " + modelData.name }
+        }
+      }
+    }
+  }
+
   // The tiles' licence asks for this, and HA shows it too.
   Rectangle {
+    id: credit
     anchors.right: parent.right
     anchors.bottom: parent.bottom
-    width: credit.implicitWidth + Style.spacing.sm * 2
-    height: credit.implicitHeight + Style.spacing.xs * 2
+    width: creditText.implicitWidth + Style.spacing.sm * 2
+    height: creditText.implicitHeight + Style.spacing.xs * 2
     color: Qt.rgba(0, 0, 0, 0.45)
     Text {
-      id: credit
+      id: creditText
       anchors.centerIn: parent
       text: "© OpenStreetMap contributors"
       font.family: view.fontFamily

@@ -1,6 +1,6 @@
-// Turns OpenStreetMap's light tiles dark, as Home Assistant's frontend does in
-// a dark theme: lightness inverted, hue kept — water stays blue, parks green —
-// then laid over the panel's own background colour, so the land is the panel.
+// Turns OpenStreetMap's light tiles dark and grey: lightness inverted, as Home
+// Assistant's frontend does in a dark theme, colour dropped, then laid over
+// the panel's own background colour, so the land is the panel.
 //
 // Rebuild after editing: /usr/lib/qt6/bin/qsb --qt6 -o darkmap.frag.qsb darkmap.frag
 #version 440
@@ -26,9 +26,8 @@ void main() {
     float lo = min(rgb.r, min(rgb.g, rgb.b));
     vec3 dark = rgb + vec3(1.0 - hi - lo);
 
-    // Muted colours read better at night.
-    float grey = dot(dark, vec3(0.299, 0.587, 0.114));
-    dark = mix(vec3(grey), dark, 0.6);
+    // Grey only: roads, water and parks part by lightness alone.
+    dark = vec3(dot(dark, vec3(0.299, 0.587, 0.114)));
 
     vec3 bg = background.rgb;
     vec3 outRgb = bg + dark * (vec3(1.0) - bg) * 0.85;

@@ -26,7 +26,8 @@ every switch, slider, thermostat, alarm keypad and camera working live.
 - **History and maps.** history-graph, statistics-graph and graph sensor cards
   draw their charts; every entity's page has its last 24 hours. Map cards show
   people and zones on OpenStreetMap, through Home Assistant's own tile proxy —
-  dark in a dark theme; the wheel zooms.
+  dark grey in a dark theme; the wheel zooms, and a person's name flies the map
+  to them.
   Logbook, energy, statistic and to-do list cards are drawn too.
 - **In the bar.** Pin any entity and its icon sits beside the house while it is
   on — an armed alarm, an open garage. With nothing pinned, the alarm panels
