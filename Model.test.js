@@ -226,5 +226,116 @@ eq("forecast rows", forecastRows([{ datetime: "2026-01-05T12:00:00Z", condition:
 eq("clean markdown", cleanMarkdown("<ha-alert alert-type=\"info\">Hi</ha-alert>"), "> Hi")
 eq("placeholder is not a tag", cleanMarkdown("say <name> or <b>x</b>"), "say &lt;name> or <b>x</b>")
 
+// --- new card kinds ---
+const kindOf = (card) => { const b = blockForCard(card, "k"); return b ? b.kind : null }
+eq("history-graph", blockForCard({ type: "history-graph", entities: ["sensor.t", { entity: "sensor.h" }], hours_to_show: 6 }, "k").entities, ["sensor.t", "sensor.h"])
+eq("history hours", blockForCard({ type: "history-graph", entities: ["sensor.t"], hours_to_show: 6 }, "k").hours, 6)
+eq("statistics days -> hours", blockForCard({ type: "statistics-graph", entities: ["sensor.t"], days_to_show: 2 }, "k").hours, 48)
+eq("statistics defaults", blockForCard({ type: "statistics-graph", entities: ["sensor.t"] }, "k").statTypes, ["mean", "min", "max"])
+eq("graph sensor is a chart", blocksForCards([{ type: "sensor", entity: "sensor.t", graph: "line" }], "p")[0].kind, "history")
+eq("plain sensor is a tile", blocksForCards([{ type: "sensor", entity: "sensor.t" }], "p")[0].kind, "tiles")
+eq("logbook", kindOf({ type: "logbook", entities: ["light.a"] }), "logbook")
+eq("todo-list", blockForCard({ type: "todo-list", entity: "todo.shopping" }, "k").entity, "todo.shopping")
+eq("energy distribution", kindOf({ type: "energy-distribution" }), "energy")
+eq("energy devices", blockForCard({ type: "energy-devices-graph" }, "k").devices, true)
+eq("energy date picker dropped", blockForCard({ type: "energy-date-selection" }, "k"), null)
+eq("statistic", blockForCard({ type: "statistic", entity: "sensor.e", stat_type: "change" }, "k").statType, "change")
+eq("map aspect", blockForCard({ type: "map", aspect_ratio: "16:9" }, "k").aspect, 9 / 16)
+eq("aspect percent", aspectOf("50%", 1), 0.5)
+
+// --- history ---
+const hist = historySeries({
+  "sensor.t": [{ s: "20", lu: 100 }, { s: "unavailable", lu: 200 }, { s: "22.5", lu: 300 }],
+  "light.a": [{ s: "off", lu: 50 }, { s: "on", lu: 250 }]
+}, ["sensor.t", "light.a", "sensor.none"], 0, 400)
+eq("numeric series", hist[0].numeric, true)
+eq("numeric points run to the end", hist[0].points, [[100, 20], [200, null], [300, 22.5], [400, 22.5]])
+eq("timeline series", hist[1].numeric, false)
+eq("timeline segments", hist[1].segments, [{ from: 50, to: 250, state: "off" }, { from: 250, to: 400, state: "on" }])
+eq("missing series is empty", hist[2].segments, [])
+eq("statistics series", statisticsSeries({ "sensor.t": [{ start: 1000, mean: 2 }, { start: 2000, mean: null }] }, ["sensor.t"], "mean")[0].points, [[1, 2]])
+eq("nice scale", niceScale([{ points: [[0, 3], [1, 17]] }]), { min: 0, max: 20, step: 5 })
+eq("nice scale flat", niceScale([{ points: [[0, 5], [1, 5]] }]).min <= 4, true)
+eq("nice scale fixed", niceScale([{ points: [[0, 3]] }], 0, 100).max, 100)
+eq("ticks count", timeTicks(0, 86400, 6).length <= 7, true)
+eq("ticks inside", timeTicks(1000, 90000, 6).every((t) => t >= 1000 && t <= 90000), true)
+eq("timeline off is dim", timelineColor("off", "#f00"), "#55607080")
+eq("timeline on is accent", timelineColor("on", "#f00"), "#f00")
+eq("timeline unknown is clear", timelineColor("unavailable", "#f00"), "transparent")
+
+// --- map ---
+eq("tile x at 0,0", tileX(0, 1), 1)
+eq("tile y at equator", Math.round(tileY(0, 1) * 1000) / 1000, 1)
+eq("tile lat inverse", Math.round(tileLat(tileY(52.37, 10), 10) * 1000) / 1000, 52.37)
+const mapStates = {
+  "person.ana": { state: "home", attributes: { friendly_name: "Ana Lima", latitude: 52.37, longitude: 4.89 } },
+  "zone.home": { state: "1", attributes: { friendly_name: "Home", latitude: 52.37, longitude: 4.89, radius: 50 } },
+  "zone.gym": { state: "0", attributes: { latitude: 52.4, longitude: 4.9, passive: true } },
+  "light.a": { state: "on", attributes: {} }
+}
+const markers = mapMarkers([], mapStates)
+eq("map default entities", markers.map((m) => m.entity), ["person.ana", "zone.home"])
+eq("map label", markers[0].label, "AL")
+eq("map zone radius", markers[1].radius, 50)
+eq("fit zoom single point is deep", fitZoom(markers, 400, 300, 256, 16).zoom, 16)
+eq("fit zoom wide spread is shallow", fitZoom([{ kind: "marker", lat: 52, lon: 4 }, { kind: "marker", lat: -33, lon: 151 }], 400, 300, 256, 16).zoom <= 2, true)
+eq("tile path wraps x", tilePath(2, 5, 1, "t k"), "/api/map_tiles/raster/2/1/1.png?token=t%20k")
+
+// --- logbook ---
+const rows = logbookRows([
+  { entity_id: "light.a", state: "on", when: 10 },
+  { name: "Backup", message: "finished", when: 20 }
+], { "light.a": { state: "on", attributes: { friendly_name: "Desk" } } })
+eq("logbook newest first", rows.map((r) => r.name), ["Backup", "Desk"])
+eq("logbook state text", rows[1].text, "On")
+eq("logbook ignores today's brightness", logbookRows([{ entity_id: "light.a", state: "on", when: 1 }],
+  { "light.a": { state: "on", attributes: { brightness: 255 } } })[0].text, "On")
+eq("palette starts with accent", seriesPalette(1, 0.5, 0)[0], "#ff8000")
+eq("palette skips accent look-alikes", seriesPalette(0.9, 0.63, 0.24).indexOf("#e6a23c"), -1)
+
+// --- energy ---
+eq("energy grid sources", energyItems({ energy_sources: [{ type: "grid", flow_from: [{ stat_energy_from: "sensor.in" }], flow_to: [{ stat_energy_to: "sensor.out" }] }, { type: "solar", stat_energy_from: "sensor.pv" }] }).map((i) => i.kind),
+  ["grid_in", "grid_out", "solar"])
+eq("energy falls back to devices", energyItems({ energy_sources: [], device_consumption: [{ stat_consumption: "sensor.tv" }] }).map((i) => i.stat), ["sensor.tv"])
+eq("energy devices only", energyItems({ energy_sources: [{ type: "solar", stat_energy_from: "sensor.pv" }], device_consumption: [{ stat_consumption: "sensor.tv" }] }, true).length, 1)
+eq("statistic total", statisticTotal([{ change: 1.5 }, { change: null }, { change: 2 }]), 3.5)
+eq("statistic total empty", statisticTotal([]), null)
+
+// --- bar ---
+const barStates = {
+  "alarm_control_panel.home": { entity_id: "alarm_control_panel.home", state: "armed_away", attributes: {} },
+  "binary_sensor.door": { entity_id: "binary_sensor.door", state: "off", attributes: { device_class: "door" } },
+  "light.a": { entity_id: "light.a", state: "on", attributes: {} }
+}
+eq("bar defaults to alarms", barIndicators([], barStates, {}).map((i) => i.entity), ["alarm_control_panel.home"])
+eq("bar shows only active", barIndicators(["binary_sensor.door", "light.a"], barStates, {}).map((i) => i.entity), ["light.a"])
+eq("bar triggered is alarming", barIndicators([], { "alarm_control_panel.x": { entity_id: "alarm_control_panel.x", state: "triggered", attributes: {} } }, {})[0].alarming, true)
+eq("toggle in list adds", toggledInList(["a"], "b"), ["a", "b"])
+eq("toggle in list removes", toggledInList(["a", "b"], "a"), ["b"])
+
+// --- notifications ---
+let notes = applyNotificationEvent({}, { type: "current", notifications: { x: { notification_id: "x", created_at: "1" } } })
+eq("backlog is not news", notes.added.length, 0)
+notes = applyNotificationEvent(notes.map, { type: "added", notifications: { y: { notification_id: "y", created_at: "2" } } })
+eq("added is news", notes.added.map((n) => n.notification_id), ["y"])
+eq("list newest first", notificationList(notes.map).map((n) => n.notification_id), ["y", "x"])
+notes = applyNotificationEvent(notes.map, { type: "removed", notifications: { x: {} } })
+eq("removed", Object.keys(notes.map), ["y"])
+eq("change note", changeNote("binary_sensor.door", { state: "off" }, { entity_id: "binary_sensor.door", state: "on", attributes: { device_class: "door", friendly_name: "Front door" } }, null),
+  { summary: "Front door", body: "Open", critical: false })
+eq("no note on attribute change", changeNote("light.a", { state: "on" }, { state: "on", attributes: {} }), null)
+eq("no note from unavailable", changeNote("light.a", { state: "unavailable" }, { state: "on", attributes: {} }), null)
+
+// --- assist ---
+eq("assist speech", assistReply({ conversation_id: "c1", response: { response_type: "action_done", speech: { plain: { speech: "Turned on" } } } }),
+  { speech: "Turned on", conversationId: "c1", error: false })
+eq("assist error", assistReply({ response: { response_type: "error", speech: { plain: { speech: "" } } } }).error, true)
+eq("assist target preferred", assistTarget({ preferred_pipeline: "b", pipelines: [{ id: "a", conversation_engine: "x", language: "en" }, { id: "b", conversation_engine: "y", conversation_language: "pt-BR", name: "PT" }] }),
+  { agent: "y", language: "pt-BR", name: "PT" })
+eq("assist target none", assistTarget({ pipelines: [] }), null)
+eq("assist target picked", assistTarget({ preferred_pipeline: "b", pipelines: [{ id: "a", conversation_engine: "x", language: "en", name: "EN" }, { id: "b", conversation_engine: "y", language: "pt" }] }, "a").name, "EN")
+eq("assist target stale pick", assistTarget({ preferred_pipeline: "b", pipelines: [{ id: "b", conversation_engine: "y", language: "pt", name: "PT" }] }, "gone").name, "PT")
+eq("pipeline options", pipelineOptions({ preferred_pipeline: "b", pipelines: [{ id: "b", name: "PT" }] }).map((o) => o.label), ["Home Assistant's preferred pipeline", "PT (preferred)"])
+
 console.log(failures === 0 ? "\nall passed" : `\n${failures} failed`)
 process.exit(failures === 0 ? 0 : 1)

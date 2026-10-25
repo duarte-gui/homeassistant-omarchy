@@ -25,6 +25,8 @@ Panel {
   property var service: null
 
   property bool setupMode: false
+  property bool notificationsMode: false
+  property bool assistMode: false
   property string detailEntity: ""
   property string selectedDashboard: ""
   property string selectedView: ""
@@ -35,6 +37,9 @@ Panel {
   property int editing: 0
 
   readonly property var barIdentity: hostWidget || root
+  // The cards are showing — not settings, an entity, notifications or Assist.
+  readonly property bool onDashboard: !setupMode && detailEntity === "" && !notificationsMode && !assistMode
+  readonly property int notificationCount: service ? service.notificationList.length : 0
 
   readonly property color foreground: bar ? bar.foreground : Color.foreground
   readonly property color urgent: bar ? bar.urgent : Color.urgent
@@ -104,8 +109,7 @@ Panel {
       var known = service.dashboardOptions.map(function(o) { return o.value })
       return "unknown dashboard: " + name + (known.length > 0 ? " (known: " + known.join(", ") + ")" : "")
     }
-    detailEntity = ""
-    setupMode = false
+    leavePages()
     selectedDashboard = resolved
     selectedView = String(view || "")
     service.loadDashboard(resolved)
@@ -123,7 +127,7 @@ Panel {
   }
 
   function selectView(path) {
-    detailEntity = ""
+    leavePages()
     selectedView = String(path)
     persistSelection()
     panelFlick.contentY = 0
@@ -191,9 +195,39 @@ Panel {
 
   function moreInfo(entityId) {
     if (!entityId) return
-    setupMode = false
+    leavePages()
     detailEntity = String(entityId)
     panelFlick.contentY = 0
+  }
+
+  // Back to the cards from whatever page is up.
+  function leavePages() {
+    detailEntity = ""
+    setupMode = false
+    notificationsMode = false
+    assistMode = false
+  }
+
+  function showNotifications() {
+    leavePages()
+    notificationsMode = true
+    panelFlick.contentY = 0
+    if (!root.opened) root.open()
+  }
+
+  function showAssist() {
+    leavePages()
+    assistMode = true
+    if (!root.opened) root.open()
+    Qt.callLater(function() { if (assistLoader.item) assistLoader.item.focusField() })
+  }
+
+  function toggleBarEntity(entityId) {
+    if (hostWidget) hostWidget.toggleListSetting("barEntities", entityId)
+  }
+
+  function toggleNotifyEntity(entityId) {
+    if (hostWidget) hostWidget.toggleListSetting("notifyEntities", entityId)
   }
 
   function navigate(path) {
@@ -340,6 +374,7 @@ Panel {
   function close() {
     if (dashboardPicker.popupOpen) dashboardPicker.close()
     if (dashboardDropdown.popupOpen) dashboardDropdown.close()
+    if (pipelineDropdown.popupOpen) pipelineDropdown.close()
     confirm.opened = false
     root.controller.hide()
   }
@@ -355,12 +390,13 @@ Panel {
   }
 
   function openSetup() {
-    root.detailEntity = ""
+    root.leavePages()
     root.setupMode = true
     if (!root.opened) root.open()
   }
 
   onSetupModeChanged: {
+    if (setupMode && service && service.online && !service.assistPipelines) service.loadPipelines(null)
     if (!setupMode && dashboardPicker.popupOpen) dashboardPicker.close()
     if (!setupMode && (haField.activeFocus || tokenField.activeFocus)) keyCatcher.forceActiveFocus()
     root.resetAddressField()
@@ -371,6 +407,12 @@ Panel {
   function back() {
     if (detailEntity !== "") { detailEntity = ""; return true }
     if (setupMode) { setupMode = false; return true }
+    if (notificationsMode) { notificationsMode = false; return true }
+    if (assistMode) {
+      assistMode = false
+      keyCatcher.forceActiveFocus()
+      return true
+    }
     return false
   }
 
@@ -423,7 +465,7 @@ Panel {
 
       onMoveRequested: function(dx, dy) {
         if (confirm.opened) return
-        if (dx !== 0 && root.detailEntity === "" && !root.setupMode) root.cycleView(dx)
+        if (dx !== 0 && root.onDashboard) root.cycleView(dx)
         if (dy !== 0) panelFlick.contentY = Math.max(0, Math.min(panelFlick.contentHeight - panelFlick.height,
           panelFlick.contentY + dy * Style.space(80)))
       }
@@ -438,7 +480,15 @@ Panel {
       onTabRequested: function(direction) { root.switchPanel(direction) }
       onTextKey: function(text) {
         if (confirm.opened) return
-        if (text === "s" || text === "S") { root.detailEntity = ""; root.setupMode = !root.setupMode }
+        if (text === "s" || text === "S") {
+          if (root.setupMode) root.setupMode = false
+          else root.openSetup()
+        }
+        else if (text === "a" || text === "A") root.showAssist()
+        else if (text === "n" || text === "N") {
+          if (root.notificationsMode) root.notificationsMode = false
+          else root.showNotifications()
+        }
         else if (text === "r" || text === "R") root.refresh()
         else if (text === "o" || text === "O") root.openHomeAssistant()
         else if (text === "d") root.cycleDashboard(1)
@@ -469,6 +519,8 @@ Panel {
             width: parent.width
             title: root.setupMode ? "Settings"
               : root.detailEntity !== "" ? "Details"
+              : root.notificationsMode ? "Notifications"
+              : root.assistMode ? "Assist"
               : (root.service && root.currentDashboard !== "" ? root.service.dashboardTitle(root.currentDashboard) : "HA Overview")
             meta: root.service ? root.service.statusLine : ""
             detail: root.flashText !== "" ? root.flashText
@@ -479,7 +531,7 @@ Panel {
 
             iconComponent: Component {
               Text {
-                text: root.setupMode ? "󰒓" : "󰟐"
+                text: root.setupMode ? "󰒓" : root.notificationsMode ? "󰂚" : root.assistMode ? "󰍩" : "󰟐"
                 font.family: root.fontFamily
                 font.pixelSize: Style.font.display
                 color: !root.setupMode && root.service && !root.service.online ? root.urgent : root.foreground
@@ -491,11 +543,29 @@ Panel {
                 spacing: Style.spacing.xs
 
                 PanelActionButton {
-                  visible: root.setupMode || root.detailEntity !== ""
+                  visible: !root.onDashboard
                   iconText: "󰁍"
                   tooltipText: "Back (Esc)"
                   foreground: root.urgent
                   onClicked: root.back()
+                }
+
+                PanelActionButton {
+                  visible: !root.assistMode
+                  iconText: "󰍩"
+                  tooltipText: "Assist (a)"
+                  foreground: root.foreground
+                  onClicked: root.showAssist()
+                }
+
+                PanelActionButton {
+                  visible: !root.notificationsMode
+                  iconText: root.notificationCount > 0 ? "󰂞" : "󰂚"
+                  tooltipText: root.notificationCount > 0
+                    ? root.notificationCount + (root.notificationCount === 1 ? " notification (n)" : " notifications (n)")
+                    : "Notifications (n)"
+                  foreground: root.notificationCount > 0 ? root.accent : root.foreground
+                  onClicked: root.showNotifications()
                 }
 
                 PanelActionButton {
@@ -527,7 +597,7 @@ Panel {
           Column {
             width: parent.width
             spacing: Style.spacing.lg
-            visible: !root.setupMode && root.detailEntity === "" && root.service && root.service.online
+            visible: root.onDashboard && root.service && root.service.online
 
             Dropdown {
               id: dashboardDropdown
@@ -569,7 +639,7 @@ Panel {
 
           Text {
             width: parent.width
-            visible: !root.setupMode && root.detailEntity === "" && !!root.service && !root.service.online
+            visible: root.onDashboard && !!root.service && !root.service.online
             text: !root.service ? ""
               : !root.service.configured ? "Set the Home Assistant address and an access token under the gear (s)."
               : root.service.connectionState === "connecting" ? "Connecting to " + root.service.haUrl + "…"
@@ -582,7 +652,7 @@ Panel {
 
           Text {
             width: parent.width
-            visible: !root.setupMode && root.detailEntity === "" && !!root.service && root.service.online
+            visible: root.onDashboard && !!root.service && root.service.online
               && (!root.lovelaceEntry || !root.lovelaceEntry.loaded)
             text: "Loading the dashboard…"
             font.family: root.fontFamily
@@ -592,7 +662,7 @@ Panel {
 
           Text {
             width: parent.width
-            visible: !root.setupMode && root.detailEntity === "" && !!root.lovelaceEntry && root.lovelaceEntry.loaded
+            visible: root.onDashboard && !!root.lovelaceEntry && root.lovelaceEntry.loaded
               && root.lovelaceEntry.error !== "" && root.lovelaceEntry.error !== "config_not_found"
             text: root.lovelaceEntry ? "Home Assistant would not send this dashboard: " + root.lovelaceEntry.message : ""
             wrapMode: Text.WordWrap
@@ -604,7 +674,7 @@ Panel {
           Column {
             width: parent.width
             spacing: Style.spacing.xl
-            visible: !root.setupMode && root.detailEntity === "" && !!root.service && root.service.online
+            visible: root.onDashboard && !!root.service && root.service.online
               && root.wideBlocks.length > 0
 
             Repeater {
@@ -623,7 +693,7 @@ Panel {
             id: masonry
             width: parent.width
             spacing: Style.spacing.xl
-            visible: !root.setupMode && root.detailEntity === "" && !!root.service && root.service.online
+            visible: root.onDashboard && !!root.service && root.service.online
 
             readonly property real columnWidth: (width - spacing * (root.columnCount - 1)) / root.columnCount
 
@@ -651,17 +721,38 @@ Panel {
 
           Text {
             width: parent.width
-            visible: !root.setupMode && root.detailEntity === "" && !!root.currentView && root.blocks.length === 0
+            visible: root.onDashboard && !!root.currentView && root.blocks.length === 0
             text: "This view has no cards."
             font.family: root.fontFamily
             font.pixelSize: Style.font.bodySmall
             color: root.dim
           }
 
+          // ---- Home Assistant's notifications
+          Loader {
+            width: parent.width
+            active: root.notificationsMode
+            visible: active
+            sourceComponent: Component {
+              NotificationsView { host: root }
+            }
+          }
+
+          // ---- Assist
+          Loader {
+            id: assistLoader
+            width: parent.width
+            active: root.assistMode
+            visible: active
+            sourceComponent: Component {
+              AssistView { host: root }
+            }
+          }
+
           // ---- more-info
           Loader {
             width: parent.width
-            active: root.detailEntity !== "" && !root.setupMode
+            active: root.detailEntity !== "" && !root.setupMode && !root.notificationsMode && !root.assistMode
             visible: active
             sourceComponent: Component {
               EntityDetail {
@@ -872,6 +963,140 @@ Panel {
                 width: parent.width
                 wrapMode: Text.WordWrap
                 text: "Panel size, camera refresh and the rest live on this widget's entry in shell.json."
+                font.family: root.fontFamily
+                font.pixelSize: Style.font.caption
+                color: root.dim
+              }
+            }
+
+            PanelSeparator {
+              width: parent.width
+              foreground: root.foreground
+            }
+
+            // ---- the bar icon and notifications
+            Column {
+              width: parent.width
+              spacing: Style.spacing.sm
+
+              PanelSectionHeader {
+                width: parent.width
+                text: "Bar and notifications"
+                foreground: root.foreground
+                fontFamily: root.fontFamily
+              }
+
+              Kit.Toggle {
+                width: parent.width
+                label: "Home Assistant's notifications"
+                description: "Toast each new one, as the bell in Home Assistant's sidebar gets it."
+                checked: root.service ? root.service.notifyHa : true
+                foreground: root.foreground
+                fontFamily: root.fontFamily
+                onClicked: if (root.hostWidget) root.hostWidget.setSetting("notifyHa", !checked)
+              }
+
+              Kit.Toggle {
+                width: parent.width
+                label: "Alarms going off"
+                description: "An urgent notification when an alarm panel is triggered."
+                checked: root.service ? root.service.notifyAlarms : true
+                foreground: root.foreground
+                fontFamily: root.fontFamily
+                onClicked: if (root.hostWidget) root.hostWidget.setSetting("notifyAlarms", !checked)
+              }
+
+              Kit.Toggle {
+                width: parent.width
+                label: "Map tiles"
+                description: "Draw map cards on OpenStreetMap, through Home Assistant's own tile proxy (2026.9+). Off, a map is a list of who is where."
+                checked: root.service ? root.service.mapTiles : true
+                foreground: root.foreground
+                fontFamily: root.fontFamily
+                onClicked: if (root.hostWidget) root.hostWidget.setSetting("mapTiles", !checked)
+              }
+
+              Item { width: 1; height: Style.spacing.lg }
+
+              PanelSectionHeader {
+                width: parent.width
+                text: "Assist pipeline"
+                foreground: root.foreground
+                fontFamily: root.fontFamily
+              }
+
+              Dropdown {
+                id: pipelineDropdown
+                width: parent.width
+                showLabel: false
+                value: root.service ? root.service.assistPipeline : ""
+                options: root.service && root.service.assistPipelines
+                  ? Model.pipelineOptions(root.service.assistPipelines)
+                  : [{ value: root.service ? root.service.assistPipeline : "", label: "Loading pipelines…" }]
+                foreground: root.foreground
+                accent: root.urgent
+                fontFamily: root.fontFamily
+                onChanged: function(value) { if (root.hostWidget) root.hostWidget.setSetting("assistPipeline", value === "" ? null : value) }
+              }
+
+              Item { width: 1; height: Style.spacing.lg }
+
+              Repeater {
+                model: [
+                  { key: "barEntities", title: "Shown in the bar", empty: "Nothing pinned: the bar shows the alarm panels while they are armed." },
+                  { key: "notifyEntities", title: "Notifying on changes", empty: "No entity notifies on its changes." }
+                ]
+                Column {
+                  required property var modelData
+                  readonly property var ids: root.service ? root.service[modelData.key] : []
+                  width: parent.width
+                  spacing: Style.spacing.xs
+
+                  Text {
+                    width: parent.width
+                    text: modelData.title
+                    font.family: root.fontFamily
+                    font.pixelSize: Style.font.bodySmall
+                    color: root.foreground
+                  }
+
+                  Flow {
+                    width: parent.width
+                    spacing: Style.spacing.sm
+                    visible: parent.ids.length > 0
+                    Repeater {
+                      model: parent.parent.ids
+                      Kit.Button {
+                        required property var modelData
+                        readonly property string listKey: parent.parent.modelData.key
+                        text: Model.entityName(modelData, root.service ? root.service.stateOf(modelData, root.service.stateRevision) : null, "")
+                        iconText: Model.glyph("mdi:close")
+                        tooltipText: "Remove " + modelData
+                        bordered: true
+                        foreground: root.foreground
+                        fontFamily: root.fontFamily
+                        fontSize: Style.font.caption
+                        onClicked: if (root.hostWidget) root.hostWidget.toggleListSetting(listKey, modelData)
+                      }
+                    }
+                  }
+
+                  Text {
+                    width: parent.width
+                    visible: parent.ids.length === 0
+                    wrapMode: Text.WordWrap
+                    text: modelData.empty
+                    font.family: root.fontFamily
+                    font.pixelSize: Style.font.caption
+                    color: root.dim
+                  }
+                }
+              }
+
+              Text {
+                width: parent.width
+                wrapMode: Text.WordWrap
+                text: "Open any entity to pin it to the bar or to be notified when it changes."
                 font.family: root.fontFamily
                 font.pixelSize: Style.font.caption
                 color: root.dim

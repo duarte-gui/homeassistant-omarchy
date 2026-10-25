@@ -133,6 +133,35 @@ Column {
     }
   }
 
+  // ---- the last day, as a line or a timeline
+  Column {
+    width: parent.width
+    spacing: Style.spacing.sm
+    visible: ["camera", "image", "todo", "button", "input_button", "scene", "event", "update", "weather"].indexOf(detail.domain) < 0
+      && detail.entityId !== ""
+
+    PanelSectionHeader {
+      width: parent.width
+      text: "Last 24 hours"
+      foreground: detail.foreground
+      fontFamily: detail.fontFamily
+    }
+
+    Loader {
+      width: parent.width
+      active: parent.visible
+      sourceComponent: Component {
+        HistoryView {
+          host: detail.host
+          entities: [detail.entityId]
+          hours: 24
+          style: "detail"
+          chartHeight: Style.space(120)
+        }
+      }
+    }
+  }
+
   // ---- attributes
   Column {
     width: parent.width
@@ -175,8 +204,39 @@ Column {
     }
   }
 
-  Row {
+  Flow {
+    width: parent.width
     spacing: Style.spacing.sm
+
+    // Pinned entities show beside the bar icon while they are on.
+    Kit.Button {
+      readonly property bool pinned: detail.service ? detail.service.barEntities.indexOf(detail.entityId) >= 0 : false
+      text: pinned ? "Shown in the bar" : "Show in the bar"
+      iconText: Model.glyph(pinned ? "mdi:pin" : "mdi:pin-outline")
+      tooltipText: "Its icon appears beside the bar icon while it is on, open or armed"
+      selected: pinned
+      bordered: true
+      foreground: detail.foreground
+      accent: detail.urgent
+      fontFamily: detail.fontFamily
+      fontSize: Style.font.bodySmall
+      onClicked: if (detail.host) detail.host.toggleBarEntity(detail.entityId)
+    }
+
+    Kit.Button {
+      readonly property bool watched: detail.service ? detail.service.notifyEntities.indexOf(detail.entityId) >= 0 : false
+      text: watched ? "Notifying changes" : "Notify me on changes"
+      iconText: Model.glyph(watched ? "mdi:bell-ring" : "mdi:bell-outline")
+      tooltipText: "A desktop notification whenever its state changes"
+      selected: watched
+      bordered: true
+      foreground: detail.foreground
+      accent: detail.urgent
+      fontFamily: detail.fontFamily
+      fontSize: Style.font.bodySmall
+      onClicked: if (detail.host) detail.host.toggleNotifyEntity(detail.entityId)
+    }
+
     Kit.Button {
       text: "History in Home Assistant"
       iconText: Model.glyph("mdi:chart-box-outline")
@@ -449,6 +509,7 @@ Column {
         host: detail.host
         entity: detail.entityId
         large: true
+        live: detail.domain === "camera"
         showName: false
         showState: false
         fit: "contain"
@@ -456,7 +517,7 @@ Column {
       Text {
         width: parent.width
         visible: detail.domain === "camera"
-        text: "Click the picture, or the play button, to watch the live stream in mpv."
+        text: "Live here while this page is open; click the picture to pause it. The window button plays it in mpv."
         wrapMode: Text.WordWrap
         font.family: detail.fontFamily
         font.pixelSize: Style.font.caption
@@ -658,90 +719,8 @@ Column {
     }
   }
 
-  // A to-do list's items are not in its state — the state is only a count —
-  // so they are asked for, and asked again whenever that count moves.
   Component {
     id: todoBody
-    Column {
-      id: todo
-      spacing: Style.spacing.sm
-      property var items: []
-      property string revisionKey: detail.st ? detail.st.state + "|" + detail.st.last_updated : ""
-
-      function reload() {
-        if (!detail.service) return
-        detail.service.request({ type: "todo/item/list", entity_id: detail.entityId }, function(ok, result) {
-          // The answer can arrive after the page moved on to another entity.
-          if (!todo) return
-          todo.items = ok && result && result.items ? result.items : []
-        })
-      }
-
-      onRevisionKeyChanged: reload()
-      Component.onCompleted: reload()
-
-      Kit.TextField {
-        width: parent.width
-        placeholderText: "Add an item"
-        foreground: detail.foreground
-        font.family: detail.fontFamily
-        onActiveFocusChanged: if (detail.host) detail.host.noteEditing(activeFocus)
-        onAccepted: {
-          if (text.trim() === "") return
-          detail.call("add_item", { item: text.trim() })
-          text = ""
-        }
-      }
-
-      Repeater {
-        model: todo.items
-        Item {
-          required property var modelData
-          width: todo.width
-          height: Style.spacing.popupRowHeight
-          readonly property bool done: modelData.status === "completed"
-
-          Text {
-            id: check
-            anchors.left: parent.left
-            anchors.verticalCenter: parent.verticalCenter
-            text: Model.glyph(parent.done ? "mdi:checkbox-marked" : "mdi:checkbox-blank-outline")
-            font.family: detail.fontFamily
-            font.pixelSize: Style.font.iconLarge
-            color: parent.done ? detail.dim : detail.foreground
-          }
-          Text {
-            anchors.left: check.right
-            anchors.leftMargin: Style.spacing.lg
-            anchors.right: removeButton.left
-            anchors.verticalCenter: parent.verticalCenter
-            text: String(modelData.summary || "")
-            elide: Text.ElideRight
-            font.family: detail.fontFamily
-            font.pixelSize: Style.font.body
-            font.strikeout: parent.done
-            color: parent.done ? detail.dim : detail.foreground
-          }
-          MouseArea {
-            anchors.left: parent.left
-            anchors.right: removeButton.left
-            anchors.top: parent.top
-            anchors.bottom: parent.bottom
-            cursorShape: Qt.PointingHandCursor
-            onClicked: detail.call("update_item", { item: modelData.uid, status: parent.done ? "needs_action" : "completed" })
-          }
-          PanelActionButton {
-            id: removeButton
-            anchors.right: parent.right
-            anchors.verticalCenter: parent.verticalCenter
-            iconText: Model.glyph("mdi:close")
-            tooltipText: "Remove"
-            foreground: detail.dim
-            fontFamily: detail.fontFamily
-            onClicked: detail.call("remove_item", { item: [modelData.uid] })
-          }
-        }
-      }
-    }
+    TodoView { host: detail.host; entity: detail.entityId }
   }
 }

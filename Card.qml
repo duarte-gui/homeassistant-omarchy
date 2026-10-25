@@ -26,7 +26,10 @@ Item {
   readonly property string fontFamily: host ? host.fontFamily : Style.font.family
   readonly property int pad: card.framed && !card.selfFramed ? Style.spacing.xl : 0
 
-  readonly property string title: block && block.title ? String(block.title) : ""
+  readonly property string title: block && block.title ? String(block.title)
+    // HA titles a to-do list card with the list's name.
+    : kind === "todo" && service ? Model.entityName(block.entity, service.stateOf(block.entity, service.stateRevision), "")
+    : ""
 
   visible: conditionsOk && kind !== ""
   implicitHeight: visible ? frame.height : 0
@@ -94,7 +97,12 @@ Item {
           case "thermostat": return thermostatBody
           case "heading": return headingBody
           case "badges": return badgesBody
-          case "map": return mapBody
+          case "map": return card.service && card.service.mapTiles ? realMapBody : mapBody
+          case "history": return historyBody
+          case "statistic": return statisticBody
+          case "logbook": return logbookBody
+          case "todo": return todoBody
+          case "energy": return energyBody
           case "note": return noteBody
           }
           return null
@@ -325,8 +333,74 @@ Item {
     }
   }
 
-  // A map without a map: who and what is where, which is most of what one is
-  // glanced at for.
+  Component {
+    id: realMapBody
+    MapView {
+      host: card.host
+      entities: card.block.entities
+      defaultZoom: card.block.defaultZoom
+      aspect: card.block.aspect
+    }
+  }
+
+  Component {
+    id: historyBody
+    HistoryView {
+      host: card.host
+      entities: card.block.entities
+      hours: card.block.hours
+      source: card.block.source
+      period: card.block.period || "hour"
+      statTypes: card.block.statTypes || ["mean", "min", "max"]
+      chartType: card.block.chartType || "line"
+      minY: card.block.minY === undefined ? null : card.block.minY
+      maxY: card.block.maxY === undefined ? null : card.block.maxY
+      style: card.block.style || ""
+      name: card.block.name || ""
+      icon: card.block.icon || ""
+    }
+  }
+
+  Component {
+    id: statisticBody
+    StatisticView {
+      host: card.host
+      entity: card.block.entity
+      name: card.block.name
+      icon: card.block.icon
+      statType: card.block.statType
+      period: card.block.period
+      unit: card.block.unit
+    }
+  }
+
+  Component {
+    id: logbookBody
+    LogbookView {
+      host: card.host
+      entities: card.block.entities
+      hours: card.block.hours
+    }
+  }
+
+  Component {
+    id: todoBody
+    TodoView {
+      host: card.host
+      entity: card.block.entity
+    }
+  }
+
+  Component {
+    id: energyBody
+    EnergyView {
+      host: card.host
+      devices: card.block.devices === true
+    }
+  }
+
+  // The map with the `mapTiles` setting off: who and what is where, which is
+  // most of what one is glanced at for, without asking a tile server.
   Component {
     id: mapBody
     Column {

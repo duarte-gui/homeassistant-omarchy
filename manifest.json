@@ -2,10 +2,10 @@
   "schemaVersion": 1,
   "id": "io.github.duarte-gui.ha-overview",
   "name": "HA Overview",
-  "version": "0.1.1",
+  "version": "0.2.0",
   "author": "duarte-gui",
   "license": "MIT",
-  "description": "Your Home Assistant dashboards in the Omarchy bar: click the icon and the dashboard drops down, drawn natively card by card, with every switch, slider, thermostat, alarm keypad and camera working live.",
+  "description": "Your Home Assistant dashboards in the Omarchy bar: click the icon and the dashboard drops down, drawn natively card by card — switches, sliders, thermostats, alarm keypads, live cameras, history graphs and maps — with Assist and Home Assistant's notifications alongside.",
   "kinds": [
     "bar-widget"
   ],
@@ -14,7 +14,7 @@
   },
   "barWidget": {
     "displayName": "HA Overview",
-    "description": "A Home Assistant dashboard one click away. Pick which dashboards the dropdown lists, switch views with tabs, and control lights, switches, covers, climate, media, locks, alarms and cameras without opening a browser. State changes arrive live over Home Assistant's websocket.",
+    "description": "A Home Assistant dashboard one click away. Pick which dashboards the dropdown lists, switch views with tabs, and control lights, switches, covers, climate, media, locks, alarms and cameras without opening a browser. Pin entities beside the bar icon, get notified when they change, talk to Assist, and see history, maps, energy and the logbook. State changes arrive live over Home Assistant's websocket.",
     "category": "System",
     "aliases": [
       "homeassistant",
@@ -33,7 +33,13 @@
       "panelWidth": 760,
       "panelHeight": 860,
       "cameraRefreshSec": 10,
-      "notifyErrors": true
+      "notifyErrors": true,
+      "barEntities": [],
+      "notifyEntities": [],
+      "notifyAlarms": true,
+      "notifyHa": true,
+      "mapTiles": true,
+      "assistPipeline": ""
     },
     "schema": [
       {
@@ -103,6 +109,48 @@
         "label": "Notify failed actions",
         "defaultValue": true,
         "description": "When a keybinding or IPC call fails while the panel is closed, say so with a desktop notification."
+      },
+      {
+        "key": "barEntities",
+        "type": "string",
+        "label": "Shown in the bar",
+        "defaultValue": "",
+        "description": "Entity ids whose icon appears beside the bar icon while they are on, open or armed, comma-separated. Empty shows the alarm panels. The pin button on an entity's page in the panel writes this for you."
+      },
+      {
+        "key": "notifyEntities",
+        "type": "string",
+        "label": "Notify on changes",
+        "defaultValue": "",
+        "description": "Entity ids that send a desktop notification whenever their state changes, comma-separated. The bell button on an entity's page in the panel writes this for you."
+      },
+      {
+        "key": "notifyAlarms",
+        "type": "boolean",
+        "label": "Notify when an alarm goes off",
+        "defaultValue": true,
+        "description": "An urgent desktop notification when any alarm panel is triggered."
+      },
+      {
+        "key": "notifyHa",
+        "type": "boolean",
+        "label": "Home Assistant's notifications",
+        "defaultValue": true,
+        "description": "Show each new Home Assistant notification (the bell in its sidebar) as a desktop notification."
+      },
+      {
+        "key": "mapTiles",
+        "type": "boolean",
+        "label": "Map tiles",
+        "defaultValue": true,
+        "description": "Draw map cards on OpenStreetMap tiles, which Home Assistant itself fetches and caches (its map_tiles proxy, 2026.9 and later), so the map talks only to Home Assistant. Off, a map card is a list of who is where."
+      },
+      {
+        "key": "assistPipeline",
+        "type": "string",
+        "label": "Assist pipeline",
+        "defaultValue": "",
+        "description": "The id of the Assist pipeline the Assist page talks to, which sets its language. Empty uses Home Assistant's preferred pipeline. The settings page in the panel lists them."
       }
     ]
   }

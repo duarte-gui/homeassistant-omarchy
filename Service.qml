@@ -47,6 +47,20 @@ Item {
   readonly property int panelHeight: setting("panelHeight", 860)
   readonly property int cameraRefreshSec: setting("cameraRefreshSec", 10)
   readonly property bool notifyErrors: setting("notifyErrors", true)
+  // Entities whose icon shows beside the bar icon while they are on. Empty
+  // means the alarm panels.
+  readonly property var barEntities: Model.splitList(setting("barEntities", []))
+  // Entities that send a desktop notification whenever their state changes.
+  readonly property var notifyEntities: Model.splitList(setting("notifyEntities", []))
+  // An alarm going off always notifies, unless this is turned off.
+  readonly property bool notifyAlarms: setting("notifyAlarms", true)
+  // Home Assistant's own notifications (the bell in its sidebar) as toasts.
+  readonly property bool notifyHa: setting("notifyHa", true)
+  // Map cards draw on OpenStreetMap tiles from Home Assistant's own tile
+  // proxy. Off, a map is a list of who is where.
+  readonly property bool mapTiles: setting("mapTiles", true)
+  // The Assist pipeline id; empty is Home Assistant's preferred one.
+  readonly property string assistPipeline: String(setting("assistPipeline", ""))
 
   // ---- live state
   // connecting | connected | auth_invalid | error | no_token | stopped
@@ -91,6 +105,20 @@ Item {
   property var callbacks: ({})
   property int nextId: 1
 
+  // Home Assistant's persistent notifications: notification_id -> notification.
+  property var notifications: ({})
+  readonly property var notificationList: Model.notificationList(notifications)
+  // The entity the last change toast was about, for `hass last`.
+  property string lastToastEntity: ""
+
+  // Assist: the conversation so far, kept here so it survives the panel
+  // closing and is shared with `omarchy-shell hass assist`.
+  property var assistLog: []
+  property string assistConversation: ""
+  property var assistTarget: null
+  property bool assistBusy: false
+  property var assistPipelines: null
+
   readonly property bool online: connectionState === "connected"
   readonly property bool configured: haUrl !== "" && token !== ""
   readonly property bool shouldRun: configured && (leader || panelOpen)
@@ -121,7 +149,14 @@ Item {
     else stopBridge()
   }
 
-  Component.onCompleted: if (shouldRun) startBridge()
+  Component.onCompleted: {
+    // Held for as long as the widget lives; the bridge re-subscribes on every
+    // reconnect.
+    subscribe(notificationsKey, { type: "persistent_notification/subscribe" })
+    if (shouldRun) startBridge()
+  }
+
+  readonly property string notificationsKey: "ha-notifications"
 
   // ------------------------------------------------------------- lookups
 
@@ -292,7 +327,110 @@ Item {
     lastCallError = message
     console.warn("ha-overview: " + message)
     // An IPC call or a keybinding has nowhere else to say it failed.
-    if (notifyErrors && !panelOpen) toast(message)
+    if (notifyErrors && !panelOpen) toast({ body: message, exec: ["omarchy-shell", "-q", "hass", "open"] })
+  }
+
+  // ---- notifications
+
+  function dismissNotification(id) {
+    return callService("persistent_notification", "dismiss", { notification_id: id }, null)
+  }
+
+  function dismissAllNotifications() {
+    return callService("persistent_notification", "dismiss_all", {}, null)
+  }
+
+  function notificationEvent(event) {
+    var folded = Model.applyNotificationEvent(notifications, event)
+    notifications = folded.map
+    // Only one monitor's widget speaks, or every screen would toast.
+    if (!leader || !notifyHa) return
+    for (var i = 0; i < folded.added.length; i++) {
+      var note = folded.added[i]
+      toast({
+        summary: String(note.title || "Home Assistant"),
+        body: String(note.message || "").replace(/\*\*|__|`/g, ""),
+        glyph: "󰂚",
+        exec: ["omarchy-shell", "-q", "hass", "notifications"]
+      })
+    }
+  }
+
+  // A watched entity changed, or an alarm went off. The click opens that
+  // entity — through `hass last`, so its id stays out of argv.
+  function watchChange(entityId, before, after) {
+    if (!leader) return
+    var watched = notifyEntities.indexOf(entityId) >= 0
+    var alarm = notifyAlarms && Model.domainOf(entityId) === "alarm_control_panel"
+      && after && after.state === "triggered" && (!before || before.state !== "triggered")
+    if (!watched && !alarm) return
+    var note = Model.changeNote(entityId, before, after, infoOf(entityId))
+    if (!note && alarm) note = { summary: Model.entityName(entityId, after, ""), body: "Triggered", critical: true }
+    if (!note) return
+    lastToastEntity = entityId
+    toast({
+      summary: note.summary,
+      body: note.body,
+      urgency: note.critical || alarm ? "critical" : "normal",
+      glyph: Model.entityGlyph(entityId, after, "", infoOf(entityId)),
+      exec: ["omarchy-shell", "-q", "hass", "last"]
+    })
+  }
+
+  // ---- assist
+
+  // One utterance to Home Assistant's conversation agent — the one the
+  // preferred Assist pipeline uses, in its language. The reply lands in
+  // assistLog; onDone gets it too, for the IPC call.
+  function assist(text, onDone) {
+    var said = String(text || "").trim()
+    if (said === "") return
+    if (!online) {
+      if (onDone) onDone({ speech: "Not connected to Home Assistant", error: true })
+      return
+    }
+    assistLog = assistLog.concat([{ from: "me", text: said }])
+    assistBusy = true
+
+    function process() {
+      var message = { type: "conversation/process", text: said }
+      if (assistTarget && assistTarget.agent) message.agent_id = assistTarget.agent
+      if (assistTarget && assistTarget.language) message.language = assistTarget.language
+      if (assistConversation !== "") message.conversation_id = assistConversation
+      request(message, function(ok, result, error) {
+        assistBusy = false
+        var reply = ok ? Model.assistReply(result) : { speech: error || "Assist failed", conversationId: "", error: true }
+        if (reply.conversationId) assistConversation = reply.conversationId
+        assistLog = assistLog.concat([{ from: "ha", text: reply.speech, error: reply.error }]).slice(-60)
+        if (onDone) onDone(reply)
+      })
+    }
+
+    if (assistTarget !== null) {
+      process()
+      return
+    }
+    loadPipelines(function() { process() })
+  }
+
+  function loadPipelines(onDone) {
+    request({ type: "assist_pipeline/pipeline/list" }, function(ok, result) {
+      assistPipelines = ok ? result : null
+      // No pipelines (or no assist_pipeline at all) still leaves the default agent.
+      assistTarget = (ok ? Model.assistTarget(result, assistPipeline) : null) || { agent: "", language: "", name: "" }
+      if (onDone) onDone()
+    })
+  }
+
+  // A different pipeline speaks another language: start the conversation over.
+  onAssistPipelineChanged: {
+    assistConversation = ""
+    if (assistPipelines) assistTarget = Model.assistTarget(assistPipelines, assistPipeline) || assistTarget
+  }
+
+  function clearAssist() {
+    assistLog = []
+    assistConversation = ""
   }
 
   // Every toast goes through notify.py, which reads it as one JSON line on
@@ -301,15 +439,15 @@ Item {
   // any local account can read a process's arguments through /proc.
   property var toastQueue: []
 
-  function toast(body) {
+  function toast(note) {
     var next = toastQueue.slice()
     next.push({
       app: "HA Overview",
-      glyph: "󰟐",
-      summary: "HA Overview",
-      body: String(body || ""),
-      urgency: "normal",
-      exec: ["omarchy-shell", "-q", "hass", "open"]
+      glyph: note.glyph || "󰟐",
+      summary: String(note.summary || "HA Overview"),
+      body: String(note.body || ""),
+      urgency: note.urgency || "normal",
+      exec: note.exec || ["omarchy-shell", "-q", "hass", "open"]
     })
     toastQueue = next
     if (!toastProcess.running) sendNextToast()
@@ -343,7 +481,7 @@ Item {
         console.warn("ha-overview: notify.py failed (" + exitCode + "), sending a generic toast")
         Quickshell.execDetached([
           "omarchy-notification-send", "--app-name", "HA Overview", "-u", "normal",
-          "-g", "󰟐", "HA Overview", "An action failed",
+          "-g", "󰟐", "HA Overview", "Something needs your attention",
           "--exec", "omarchy-shell", "-q", "hass", "open"
         ])
       }
@@ -423,6 +561,10 @@ Item {
       }
       break
     case "subscription":
+      if (message.key === notificationsKey) {
+        if (message.event) notificationEvent(message.event)
+        break
+      }
       var data = subscriptionData
       data[message.key] = message.error ? { error: message.error } : message.event
       subscriptionData = data
@@ -436,9 +578,11 @@ Item {
     var setChanged = false
     var settled = []
     for (var id in changed) {
-      if (store[id] === undefined) setChanged = true
+      var before = store[id]
+      if (before === undefined) setChanged = true
       store[id] = changed[id]
       settled.push(id)
+      watchChange(id, before, changed[id])
     }
     for (var i = 0; i < removed.length; i++) {
       if (store[removed[i]] !== undefined) {
@@ -476,6 +620,10 @@ Item {
   function reconnect() {
     lovelace = ({})
     panels = []
+    notifications = ({})
+    assistTarget = null
+    assistPipelines = null
+    assistConversation = ""
     stateStore = ({})
     entitySetRevision++
     stateRevision++

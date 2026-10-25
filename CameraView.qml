@@ -10,8 +10,11 @@ import "Model.js" as Model
 // tick rather than a decoded stream: a live decode per card inside the shell
 // would cost far more than a glance is worth. The entity_picture URL carries
 // its own short-lived token, so no header is needed. Two images cross-fade so
-// the card never blanks between frames. The live stream is one click away, in
-// mpv.
+// the card never blanks between frames.
+//
+// The play button turns the card live, in place (LiveVideo); the detail page
+// starts live. The pop-out button, or a middle click, sends the stream to mpv
+// instead, for a window of its own.
 Item {
   id: view
 
@@ -30,6 +33,8 @@ Item {
   property var tapAction: null
   property string fit: "cover"
   property bool large: false
+  // Playing the live stream in place of the snapshots.
+  property bool live: false
 
   readonly property var service: host ? host.service : null
   readonly property var st: service ? service.stateOf(entity, service.stateRevision) : null
@@ -52,6 +57,8 @@ Item {
 
   function requestFrame() {
     if (picturePath === "" || !service) return
+    // The stream is the picture while it plays.
+    if (liveVideo.playing) return
     // Only cameras move; a still image is fetched once.
     var next = service.pictureUrl(picturePath, isCamera ? tick : null)
     var back = frontIsA ? imageB : imageA
@@ -107,9 +114,19 @@ Item {
     }
   }
 
+  LiveVideo {
+    id: liveVideo
+    anchors.fill: parent
+    host: view.host
+    entity: view.entity
+    active: view.live && view.isCamera && !!view.host && view.host.opened === true
+    fit: view.fit
+    picturePath: view.picturePath
+  }
+
   Text {
     anchors.centerIn: parent
-    visible: !view.loadedOnce
+    visible: !view.loadedOnce && !liveVideo.playing
     text: Model.glyph(view.failures > 2 || Model.isUnavailable(view.st) && view.picturePath === "" ? "mdi:video-off" : "mdi:video")
     font.family: view.fontFamily
     font.pixelSize: Style.font.displayLarge
@@ -122,9 +139,14 @@ Item {
     acceptedButtons: Qt.LeftButton | Qt.RightButton | Qt.MiddleButton
     onClicked: function(event) {
       if (!view.host) return
-      // Middle click, or any click on the detail view, is the live stream.
-      if (event.button === Qt.MiddleButton || view.large && event.button === Qt.LeftButton) {
+      // Middle click is the stream in mpv; a click on the detail view
+      // starts or stops it in place.
+      if (event.button === Qt.MiddleButton) {
         if (view.isCamera) view.host.streamCamera(view.entity)
+        return
+      }
+      if (view.large && event.button === Qt.LeftButton) {
+        if (view.isCamera) view.live = !view.live
         return
       }
       if (event.button === Qt.RightButton) {
@@ -191,11 +213,23 @@ Item {
 
       PanelActionButton {
         visible: view.isCamera
-        iconText: Model.glyph("mdi:play-circle-outline")
-        tooltipText: "Watch live"
+        iconText: Model.glyph(view.live ? "mdi:stop-circle-outline" : "mdi:play-circle-outline")
+        tooltipText: view.live ? "Back to snapshots" : "Watch live here"
         foreground: "white"
         fontFamily: view.fontFamily
-        onClicked: if (view.host) view.host.streamCamera(view.entity)
+        onClicked: view.live = !view.live
+      }
+
+      PanelActionButton {
+        visible: view.isCamera
+        iconText: Model.glyph("mdi:open-in-new")
+        tooltipText: "Watch in a window (mpv)"
+        foreground: "white"
+        fontFamily: view.fontFamily
+        onClicked: {
+          view.live = false
+          if (view.host) view.host.streamCamera(view.entity)
+        }
       }
     }
   }

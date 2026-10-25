@@ -10,7 +10,10 @@ import "Model.js" as Model
 // panel does not drop it and opening it again shows the house as it is now.
 //
 // Left click drops the dashboard down, right click opens the settings, middle
-// click opens Home Assistant itself in the browser.
+// click opens Home Assistant itself in the browser. Beside the house, the
+// entities pinned to the bar show their icon while they are on — an armed
+// alarm, an open door — and a dot on the house means Home Assistant has
+// notifications waiting.
 BarWidget {
   id: root
   moduleName: "io.github.duarte-gui.ha-overview"
@@ -37,8 +40,14 @@ BarWidget {
 
   // Ui/BarWidget has no barForeground of its own — that lives on the bar.
   readonly property color barForeground: bar ? bar.barForeground : Color.foreground
+  // Bound to stateRevision through the extra argument, so it follows every change.
+  readonly property var indicators: service.online
+    ? Model.barIndicators(service.barEntities, service.stateStore, service.entityInfo, service.stateRevision) : []
+  readonly property bool alarming: indicators.some(function(i) { return i.alarming })
+
   readonly property color iconColor: {
     if (!service.configured) return Qt.darker(barForeground, 1.55)
+    if (root.alarming) return bar ? bar.urgent : Color.urgent
     if (service.connectionState === "auth_invalid" || service.connectionState === "error")
       return bar ? bar.urgent : Color.urgent
     if (!service.everConnected) return Qt.darker(barForeground, 1.55)
@@ -47,6 +56,13 @@ BarWidget {
   }
 
   readonly property string statusText: service.statusLine
+  readonly property string tooltipText: {
+    var lines = ["HA Overview · " + statusText]
+    var count = service.notificationList.length
+    if (count > 0) lines.push(count + (count === 1 ? " notification" : " notifications") + " in Home Assistant")
+    for (var i = 0; i < indicators.length; i++) lines.push(indicators[i].label)
+    return lines.join("\n")
+  }
 
   Service {
     id: service
@@ -101,6 +117,13 @@ BarWidget {
     if (panelLoader.item) panelLoader.item.openSetup()
   }
 
+  // Add an entity to a list setting, or take it out.
+  function toggleListSetting(key, entityId) {
+    var current = key === "barEntities" ? service.barEntities : service.notifyEntities
+    var next = Model.toggledInList(current, entityId)
+    setSetting(key, next.length > 0 ? next : null)
+  }
+
   function refresh() {
     service.refresh()
   }
@@ -115,8 +138,8 @@ BarWidget {
     if ("service" in target) target.service = service
   }
 
-  implicitWidth: button.implicitWidth
-  implicitHeight: button.implicitHeight
+  implicitWidth: strip.implicitWidth
+  implicitHeight: strip.implicitHeight
 
   onBarChanged: injectPanel()
   onSettingsChanged: injectPanel()
@@ -201,21 +224,102 @@ BarWidget {
       if (!root.opened) root.open()
       return "ok"
     }
+
+    // The entity the last change notification was about. Notifications click
+    // through to this rather than naming the entity in their own argv.
+    function last(): string {
+      if (service.lastToastEntity === "") return "nothing yet"
+      return moreInfo(service.lastToastEntity)
+    }
+
+    // Home Assistant's notifications: shows them, and says how many.
+    function notifications(): string {
+      if (panelLoader.item) panelLoader.item.showNotifications()
+      return String(service.notificationList.length)
+    }
+
+    // Pin an entity beside the bar icon, or unpin it.
+    function pin(entity: string): string {
+      var id = Model.resolveEntity(entity, service.stateStore)
+      if (id === "") return "unknown entity: " + entity
+      root.toggleListSetting("barEntities", id)
+      return service.barEntities.indexOf(id) >= 0 ? "pinned " + id : "unpinned " + id
+    }
+
+    // Be notified whenever an entity changes, or stop.
+    function watch(entity: string): string {
+      var id = Model.resolveEntity(entity, service.stateStore)
+      if (id === "") return "unknown entity: " + entity
+      root.toggleListSetting("notifyEntities", id)
+      return service.notifyEntities.indexOf(id) >= 0 ? "watching " + id : "stopped watching " + id
+    }
+
+    // Talk to Assist: `omarchy-shell hass assist "turn off the lights"`. The
+    // answer comes as a notification, since this call cannot wait for it.
+    // With no text it opens the Assist page.
+    function assist(text: string): string {
+      if (String(text || "").trim() === "") return chat()
+      service.assist(text, function(reply) {
+        if (!root.opened) service.toast({ summary: "Assist", body: reply.speech, glyph: "󰍩",
+          exec: ["omarchy-shell", "-q", "hass", "chat"] })
+      })
+      return "sent"
+    }
+
+    // The Assist page, to keep talking.
+    function chat(): string {
+      if (panelLoader.item) panelLoader.item.showAssist()
+      return "ok"
+    }
   }
 
-  BarIconButton {
-    id: button
-    anchors.fill: parent
-    bar: root.bar
-    text: "󰟐"
-    foreground: root.iconColor
-    active: root.opened
-    tooltipText: "HA Overview · " + root.statusText
+  Grid {
+    id: strip
+    columns: root.vertical ? 1 : 1 + root.indicators.length
+    spacing: 0
 
-    onPressed: function(buttonCode) {
-      if (buttonCode === Qt.RightButton) root.openSetup()
-      else if (buttonCode === Qt.MiddleButton) root.openHomeAssistant()
-      else root.togglePanel()
+    BarIconButton {
+      id: button
+      bar: root.bar
+      text: "󰟐"
+      foreground: root.iconColor
+      active: root.opened
+      tooltipText: root.tooltipText
+
+      onPressed: function(buttonCode) {
+        if (buttonCode === Qt.RightButton) root.openSetup()
+        else if (buttonCode === Qt.MiddleButton) root.openHomeAssistant()
+        else root.togglePanel()
+      }
+
+      // Home Assistant has notifications waiting.
+      Rectangle {
+        visible: service.notificationList.length > 0
+        width: Style.space(6)
+        height: width
+        radius: width / 2
+        x: parent.width / 2 + Style.space(5)
+        y: parent.height / 2 - Style.space(9)
+        color: Color.accent
+      }
+    }
+
+    Repeater {
+      model: root.indicators
+      BarIconButton {
+        required property var modelData
+        bar: root.bar
+        text: modelData.glyph
+        foreground: modelData.alarming ? (root.bar ? root.bar.urgent : Color.urgent) : root.barForeground
+        tooltipText: modelData.label
+        onPressed: function(buttonCode) {
+          if (buttonCode === Qt.MiddleButton) service.toggle(modelData.entity)
+          else if (panelLoader.item) {
+            panelLoader.item.moreInfo(modelData.entity)
+            if (!root.opened) root.open()
+          }
+        }
+      }
     }
   }
 }

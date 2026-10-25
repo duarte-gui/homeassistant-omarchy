@@ -430,13 +430,18 @@ function blocksForCards(cards, prefix) {
   for (var i = 0; i < (cards || []).length; i++) {
     var card = cards[i]
     if (!card || typeof card !== "object") continue
-    if (TILE_TYPES.indexOf(card.type) >= 0) { run.push(card); continue }
+    if (TILE_TYPES.indexOf(card.type) >= 0 && !isGraphSensor(card)) { run.push(card); continue }
     flushRun()
     var block = blockForCard(card, prefix + "-" + i)
     if (block) out.push(block)
   }
   flushRun()
   return out
+}
+
+// A sensor card that draws its graph is a chart, not a tile.
+function isGraphSensor(card) {
+  return !!card && card.type === "sensor" && card.graph === "line"
 }
 
 function sumWeight(blocks) {
@@ -537,20 +542,73 @@ function blockForCard(card, key) {
       }).filter(function(item) { return item && item.entity }), weight: 0.6 }
     break
   case "map":
-    block = { kind: "map", title: card.title ? String(card.title) : "Map",
-      entities: (card.entities || []).map(function(item) { return typeof item === "string" ? item : item.entity }),
-      weight: 3 }
+    block = { kind: "map", title: card.title ? String(card.title) : "",
+      entities: (card.entities || []).map(function(item) { return typeof item === "string" ? item : item.entity })
+        .filter(function(id) { return !!id }),
+      hoursToShow: Number(card.hours_to_show) || 0,
+      defaultZoom: Number(card.default_zoom) || 0,
+      aspect: aspectOf(card.aspect_ratio, 0.75),
+      weight: 4 }
     break
   case "history-graph":
+    block = { kind: "history", source: "history", title: card.title ? String(card.title) : "",
+      entities: entityList(card.entities), hours: Number(card.hours_to_show) || 24,
+      minY: numberOr(card.min_y_axis, null), maxY: numberOr(card.max_y_axis, null),
+      weight: 3 }
+    break
   case "statistics-graph":
-  case "statistic":
+    block = { kind: "history", source: "statistics", title: card.title ? String(card.title) : "",
+      entities: entityList(card.entities), hours: (Number(card.days_to_show) || 30) * 24,
+      period: String(card.period || "hour"), statTypes: asList(card.stat_types || ["mean", "min", "max"]),
+      chartType: String(card.chart_type || "line"),
+      minY: numberOr(card.min_y_axis, null), maxY: numberOr(card.max_y_axis, null),
+      weight: 3 }
+    break
   case "sensor":
-  case "plant-status":
+    // Only a graph sensor gets here; the plain one is a tile.
+    block = { kind: "history", source: "history", style: "sensor",
+      title: "", name: card.name ? String(card.name) : "", entities: entityList([card.entity]),
+      hours: Number(card.hours_to_show) || 24, icon: card.icon ? String(card.icon) : "",
+      weight: 2.5 }
+    break
+  case "statistic":
+    if (!card.entity) return null
+    block = { kind: "statistic", entity: String(card.entity), name: card.name ? String(card.name) : "",
+      icon: card.icon ? String(card.icon) : "", statType: String(card.stat_type || "change"),
+      period: card.period || { calendar: { period: "day" } }, unit: card.unit ? String(card.unit) : "",
+      weight: 1.4 }
+    break
   case "logbook":
-  case "area":
+    block = { kind: "logbook", title: card.title ? String(card.title) : "Logbook",
+      entities: entityList(card.entities || (card.target && card.target.entity_id)),
+      hours: Number(card.hours_to_show) || 24, weight: 4 }
+    break
   case "todo-list":
-  case "calendar":
+    if (!card.entity) return null
+    block = { kind: "todo", title: card.title ? String(card.title) : "", entity: String(card.entity), weight: 3.5 }
+    break
+  case "energy-date-selection":
+  case "energy-compare":
+    // Date pickers for the other energy cards, which here always show today.
+    return null
   case "energy-distribution":
+  case "energy-sources-table":
+  case "energy-usage-graph":
+  case "energy-solar-graph":
+  case "energy-gas-graph":
+  case "energy-water-graph":
+  case "energy-grid-neutrality-gauge":
+  case "energy-solar-consumed-gauge":
+  case "energy-self-sufficiency-gauge":
+  case "energy-carbon-consumed-gauge":
+  case "energy-devices-graph":
+  case "energy-devices-detail-graph":
+    block = { kind: "energy", title: card.title ? String(card.title) : "Energy today",
+      devices: type.indexOf("devices") >= 0, weight: 3 }
+    break
+  case "plant-status":
+  case "area":
+  case "calendar":
   case "iframe":
   default:
     block = fallbackBlock(card, key)
@@ -560,6 +618,29 @@ function blockForCard(card, key) {
   if (!block) return null
   block.conditions = (block.conditions || []).concat(conditions)
   return withKey(block, key)
+}
+
+// A card's entities as plain ids, whatever shape each was given in.
+function entityList(list) {
+  return asList(list).map(function(item) {
+    return typeof item === "string" ? item : (item && item.entity ? String(item.entity) : "")
+  }).filter(function(id) { return id !== "" })
+}
+
+function numberOr(value, fallback) {
+  var n = Number(value)
+  return value === undefined || value === null || value === "" || isNaN(n) ? fallback : n
+}
+
+// "16:9", "75%" or "0.75" -> height / width.
+function aspectOf(value, fallback) {
+  var text = String(value || "").trim()
+  if (text === "") return fallback
+  var ratio = text.match(/^(\d+(?:\.\d+)?)\s*[:x]\s*(\d+(?:\.\d+)?)$/)
+  if (ratio) return Number(ratio[2]) / Number(ratio[1])
+  if (/%$/.test(text)) return (parseFloat(text) || 0) / 100 || fallback
+  var n = parseFloat(text)
+  return n > 0 ? n : fallback
 }
 
 function withKey(block, key) {
@@ -1440,4 +1521,453 @@ function cleanMarkdown(text) {
     // A placeholder such as "<name>" in prose is not a tag, but Qt reads it as
     // one and swallows the rest of the paragraph — and any table after it.
     .replace(/<(?!\/?(a|b|i|u|s|br|p|em|strong|code|pre|img|ul|ol|li|h[1-6]|hr|sub|sup|table|tr|td|th|blockquote)\b)/gi, "&lt;")
+}
+
+// ----------------------------------------------------------------- history
+
+var NO_VALUE = ["unavailable", "unknown", "", "None"]
+
+// HA's compressed history ({entity_id: [{s, lu, lc?}]}, times in epoch
+// seconds) -> one series per entity. A series is numeric when every real value
+// in it parses as a number; that one draws as a line, the rest as a timeline
+// of coloured segments.
+//
+//   { entity, numeric, points: [[t, v]], segments: [{ from, to, state }] }
+function historySeries(result, entityIds, startSec, endSec) {
+  var out = []
+  var data = result || {}
+  for (var i = 0; i < entityIds.length; i++) {
+    var id = entityIds[i]
+    var list = data[id] || []
+    var numeric = list.length > 0
+    var points = []
+    var segments = []
+    for (var j = 0; j < list.length; j++) {
+      var item = list[j]
+      var t = Math.max(startSec, Number(item.lu !== undefined ? item.lu : item.lc) || startSec)
+      var value = String(item.s)
+      var next = j + 1 < list.length ? Number(list[j + 1].lu !== undefined ? list[j + 1].lu : list[j + 1].lc) : endSec
+      segments.push({ from: t, to: Math.max(t, Math.min(endSec, next)), state: value })
+      if (NO_VALUE.indexOf(value) >= 0) {
+        points.push([t, null])
+        continue
+      }
+      var n = Number(value)
+      if (isNaN(n)) numeric = false
+      else points.push([t, n])
+    }
+    // A number holds until it changes: the line runs on to now.
+    if (numeric && points.length > 0 && points[points.length - 1][1] !== null)
+      points.push([endSec, points[points.length - 1][1]])
+    out.push({ entity: id, numeric: numeric && points.some(function(p) { return p[1] !== null }),
+      points: numeric ? points : [], segments: segments })
+  }
+  return out
+}
+
+// recorder/statistics_during_period -> the same series shape. Statistics are
+// always numbers; `start` comes in epoch milliseconds.
+function statisticsSeries(result, statisticIds, statType) {
+  var out = []
+  var data = result || {}
+  for (var i = 0; i < statisticIds.length; i++) {
+    var id = statisticIds[i]
+    var rows = data[id] || []
+    var points = []
+    for (var j = 0; j < rows.length; j++) {
+      var row = rows[j]
+      var value = row[statType]
+      if (value === undefined || value === null) continue
+      points.push([Number(row.start) / 1000, Number(value)])
+    }
+    out.push({ entity: id, numeric: points.length > 0, points: points, segments: [], stat: statType })
+  }
+  return out
+}
+
+// The y range a set of series needs, widened to round numbers.
+//   { min, max, step }
+function niceScale(series, fixedMin, fixedMax) {
+  var lo = Infinity, hi = -Infinity
+  for (var i = 0; i < series.length; i++) {
+    var points = series[i].points || []
+    for (var j = 0; j < points.length; j++) {
+      if (points[j][1] === null) continue
+      lo = Math.min(lo, points[j][1])
+      hi = Math.max(hi, points[j][1])
+    }
+  }
+  if (fixedMin !== null && fixedMin !== undefined) lo = fixedMin
+  if (fixedMax !== null && fixedMax !== undefined) hi = fixedMax
+  if (!isFinite(lo) || !isFinite(hi)) return { min: 0, max: 1, step: 0.5 }
+  if (lo === hi) { lo -= 1; hi += 1 }
+  var raw = (hi - lo) / 4
+  var magnitude = Math.pow(10, Math.floor(Math.log(raw) / Math.LN10))
+  var step = [1, 2, 2.5, 5, 10].map(function(m) { return m * magnitude })
+    .filter(function(v) { return v >= raw })[0]
+  return {
+    min: fixedMin !== null && fixedMin !== undefined ? fixedMin : Math.floor(lo / step) * step,
+    max: fixedMax !== null && fixedMax !== undefined ? fixedMax : Math.ceil(hi / step) * step,
+    step: step
+  }
+}
+
+// Where the time axis gets a label: about `count` of them, on whole hours or
+// days so they read naturally.
+function timeTicks(startSec, endSec, count) {
+  var span = endSec - startSec
+  if (span <= 0) return []
+  var steps = [900, 1800, 3600, 7200, 10800, 21600, 43200, 86400, 172800, 604800]
+  var step = steps[steps.length - 1]
+  for (var i = 0; i < steps.length; i++) {
+    if (span / steps[i] <= (count || 5)) { step = steps[i]; break }
+  }
+  // Ticks fall on local whole hours or local midnights.
+  var offset = new Date(startSec * 1000).getTimezoneOffset() * 60
+  var first = Math.ceil((startSec - offset) / step) * step + offset
+  var out = []
+  for (var t = first; t <= endSec; t += step) out.push(t)
+  return out
+}
+
+function tickLabel(t, spanSec) {
+  var date = new Date(t * 1000)
+  if (spanSec <= 2 * 86400) return (date.getHours() < 10 ? "0" : "") + date.getHours() + ":"
+    + (date.getMinutes() < 10 ? "0" : "") + date.getMinutes()
+  return date.getDate() + "/" + (date.getMonth() + 1)
+}
+
+// Colours for several lines on one chart: the accent first, then the ones
+// that are clearly not it. r, g, b are 0–1, as QML colours give them.
+var SERIES_COLORS = ["#4fa3e6", "#e6a23c", "#6cc28b", "#c46be6", "#e66b8f", "#4fc8d6", "#e6d84f"]
+
+function seriesPalette(r, g, b) {
+  function hex(v) { var h = Math.round(v * 255).toString(16); return h.length < 2 ? "0" + h : h }
+  var out = ["#" + hex(r) + hex(g) + hex(b)]
+  for (var i = 0; i < SERIES_COLORS.length; i++) {
+    var c = SERIES_COLORS[i]
+    var dr = parseInt(c.substr(1, 2), 16) / 255 - r
+    var dg = parseInt(c.substr(3, 2), 16) / 255 - g
+    var db = parseInt(c.substr(5, 2), 16) / 255 - b
+    if (Math.sqrt(dr * dr + dg * dg + db * db) > 0.3) out.push(c)
+  }
+  return out
+}
+
+// The same state gets the same colour in every timeline. On and off get
+// HA's own sense; anything else hashes into a small palette.
+var TIMELINE_PALETTE = ["#4f8fe6", "#e6a23c", "#6cc28b", "#c46be6", "#e66b8f", "#4fc8d6", "#b7b04a"]
+
+function timelineColor(state, accent) {
+  var value = String(state)
+  if (NO_VALUE.indexOf(value) >= 0) return "transparent"
+  if (INACTIVE.indexOf(value) >= 0) return "#55607080"
+  if (["on", "open", "home", "playing", "unlocked", "heat", "cool"].indexOf(value) >= 0) return accent || TIMELINE_PALETTE[0]
+  var hash = 0
+  for (var i = 0; i < value.length; i++) hash = (hash * 31 + value.charCodeAt(i)) % 9973
+  return TIMELINE_PALETTE[hash % TIMELINE_PALETTE.length]
+}
+
+// --------------------------------------------------------------------- map
+
+// Web Mercator, in tile units at zoom z.
+function tileX(lon, z) {
+  return (Number(lon) + 180) / 360 * Math.pow(2, z)
+}
+
+function tileY(lat, z) {
+  var r = Number(lat) * Math.PI / 180
+  return (1 - Math.log(Math.tan(r) + 1 / Math.cos(r)) / Math.PI) / 2 * Math.pow(2, z)
+}
+
+function tileLon(x, z) {
+  return x / Math.pow(2, z) * 360 - 180
+}
+
+function tileLat(y, z) {
+  var n = Math.PI - 2 * Math.PI * y / Math.pow(2, z)
+  return 180 / Math.PI * Math.atan(0.5 * (Math.exp(n) - Math.exp(-n)))
+}
+
+// What a map card shows: its entities, or — given none — every person and
+// tracker that has a position, plus the zones, the way HA's map does.
+//   [{ entity, lat, lon, kind: "zone" | "marker", radius, name, picture, label, active }]
+function mapMarkers(entityIds, states) {
+  var ids = entityIds && entityIds.length > 0 ? entityIds.slice() : []
+  if (ids.length === 0) {
+    for (var id in states) {
+      var domain = domainOf(id)
+      if (domain === "person" || domain === "device_tracker" || domain === "zone") ids.push(id)
+    }
+    ids.sort()
+  }
+  var out = []
+  for (var i = 0; i < ids.length; i++) {
+    var st = states[ids[i]]
+    var attrs = st && st.attributes ? st.attributes : null
+    if (!attrs || attrs.latitude === undefined || attrs.longitude === undefined) continue
+    var zone = domainOf(ids[i]) === "zone"
+    if (zone && attrs.passive) continue
+    var name = entityName(ids[i], st, "")
+    out.push({
+      entity: ids[i],
+      lat: Number(attrs.latitude),
+      lon: Number(attrs.longitude),
+      kind: zone ? "zone" : "marker",
+      radius: zone ? Number(attrs.radius) || 100 : Number(attrs.gps_accuracy) || 0,
+      name: name,
+      picture: attrs.entity_picture ? String(attrs.entity_picture) : "",
+      icon: attrs.icon ? String(attrs.icon) : "",
+      label: name.split(/\s+/).map(function(w) { return w.charAt(0) }).join("").slice(0, 2).toUpperCase(),
+      active: !zone && String(st.state) !== "not_home"
+    })
+  }
+  return out
+}
+
+// The deepest zoom at which every marker fits in w×h pixels, leaving a margin.
+function fitZoom(markers, width, height, tileSize, maxZoom) {
+  var points = markers.filter(function(m) { return m.kind === "marker" })
+  if (points.length === 0) points = markers
+  if (points.length === 0) return { zoom: 2, lat: 20, lon: 0 }
+  var lats = points.map(function(m) { return m.lat })
+  var lons = points.map(function(m) { return m.lon })
+  var north = Math.max.apply(null, lats), south = Math.min.apply(null, lats)
+  var east = Math.max.apply(null, lons), west = Math.min.apply(null, lons)
+  var top = maxZoom || 16
+  var zoom = top
+  for (; zoom > 1; zoom--) {
+    var w = (tileX(east, zoom) - tileX(west, zoom)) * tileSize
+    var h = (tileY(south, zoom) - tileY(north, zoom)) * tileSize
+    if (w <= width * 0.7 && h <= height * 0.7) break
+  }
+  return { zoom: zoom, lat: (north + south) / 2, lon: (east + west) / 2 }
+}
+
+// A map tile, through Home Assistant's own tile proxy (the map_tiles
+// integration, 2026.9 and later): HA fetches OpenStreetMap's tiles with the
+// identifying User-Agent OSM asks for, caches them, and serves them to anyone
+// holding its rotating map token. So the map talks only to Home Assistant.
+function tilePath(z, x, y, token) {
+  var n = Math.pow(2, z)
+  var wrapped = ((x % n) + n) % n
+  return "/api/map_tiles/raster/" + z + "/" + wrapped + "/" + y + ".png?token=" + encodeURIComponent(String(token || ""))
+}
+
+// ----------------------------------------------------------------- logbook
+
+// logbook/get_events -> rows, newest first. An entry is either a state change
+// ({entity_id, state, when}) or a message ({name, message, when}).
+function logbookRows(entries, states, limit) {
+  var out = []
+  var list = (entries || []).slice().sort(function(a, b) { return Number(b.when) - Number(a.when) })
+  for (var i = 0; i < list.length && out.length < (limit || 50); i++) {
+    var e = list[i]
+    var st = e.entity_id && states ? states[e.entity_id] : null
+    var name = e.name ? String(e.name) : entityName(e.entity_id, st, "")
+    var text = e.message ? String(e.message)
+      // Only what says how to word the state, not today's brightness or
+      // volume, which were not true then.
+      : e.state !== undefined ? stateText({ entity_id: e.entity_id, state: e.state,
+          attributes: wordingAttributes(st) }, null)
+      : ""
+    out.push({ when: Number(e.when) || 0, entity: e.entity_id ? String(e.entity_id) : "", name: name, text: text,
+      state: e.state !== undefined ? String(e.state) : "" })
+  }
+  return out
+}
+
+function wordingAttributes(state) {
+  var attrs = state && state.attributes ? state.attributes : {}
+  var out = {}
+  if (attrs.device_class) out.device_class = attrs.device_class
+  if (attrs.unit_of_measurement) out.unit_of_measurement = attrs.unit_of_measurement
+  return out
+}
+
+// ------------------------------------------------------------------ energy
+
+// Energy preferences -> the statistics to total for today, each labelled.
+//   [{ stat, label, kind }]  kind: grid_in grid_out solar battery_in battery_out gas water device
+function energyItems(prefs, devicesOnly) {
+  var out = []
+  var p = prefs || {}
+  function add(stat, label, kind) {
+    if (stat) out.push({ stat: String(stat), label: label, kind: kind })
+  }
+  if (!devicesOnly) {
+    var sources = p.energy_sources || []
+    for (var i = 0; i < sources.length; i++) {
+      var s = sources[i] || {}
+      if (s.type === "grid") {
+        var from = s.flow_from || (s.stat_energy_from ? [{ stat_energy_from: s.stat_energy_from }] : [])
+        var to = s.flow_to || (s.stat_energy_to ? [{ stat_energy_to: s.stat_energy_to }] : [])
+        for (var f = 0; f < from.length; f++) add(from[f].stat_energy_from, "From the grid", "grid_in")
+        for (var t = 0; t < to.length; t++) add(to[t].stat_energy_to, "To the grid", "grid_out")
+      } else if (s.type === "solar") {
+        add(s.stat_energy_from, "Solar", "solar")
+      } else if (s.type === "battery") {
+        add(s.stat_energy_from, "From the battery", "battery_out")
+        add(s.stat_energy_to, "Into the battery", "battery_in")
+      } else if (s.type === "gas") {
+        add(s.stat_energy_from, "Gas", "gas")
+      } else if (s.type === "water") {
+        add(s.stat_energy_from, "Water", "water")
+      }
+    }
+  }
+  if (devicesOnly || out.length === 0) {
+    var devices = p.device_consumption || []
+    for (var d = 0; d < devices.length; d++) {
+      var dev = devices[d] || {}
+      add(dev.stat_consumption, dev.name ? String(dev.name) : "", "device")
+    }
+  }
+  return out
+}
+
+// A statistic's total over the rows statistics_during_period returned, from
+// its "change" per period.
+function statisticTotal(rows) {
+  var total = 0
+  var any = false
+  for (var i = 0; i < (rows || []).length; i++) {
+    var value = rows[i].change
+    if (value === undefined || value === null) continue
+    total += Number(value)
+    any = true
+  }
+  return any ? total : null
+}
+
+var ENERGY_ICONS = {
+  grid_in: "mdi:transmission-tower-import", grid_out: "mdi:transmission-tower-export", solar: "mdi:solar-power",
+  battery_in: "mdi:battery-arrow-up", battery_out: "mdi:battery-arrow-down", gas: "mdi:fire",
+  water: "mdi:water", device: "mdi:power-plug"
+}
+
+// Today's local midnight, as an ISO string HA accepts.
+function startOfToday(nowMs) {
+  var date = new Date(nowMs)
+  date.setHours(0, 0, 0, 0)
+  return date.toISOString()
+}
+
+// --------------------------------------------------------------------- bar
+
+// What the bar icon shows beside the house: each watched entity that is in
+// its "on" sense, or in trouble. With nothing picked, the alarm panels are
+// watched, which is what most people would want there anyway.
+//   [{ entity, glyph, alarming, label }]
+function barIndicators(watched, states, infos) {
+  var ids = watched && watched.length > 0 ? watched : Object.keys(states || {}).filter(function(id) {
+    return domainOf(id) === "alarm_control_panel"
+  }).sort()
+  var out = []
+  for (var i = 0; i < ids.length; i++) {
+    var st = states ? states[ids[i]] : null
+    if (!st) continue
+    var alarming = isAlarming(st)
+    if (!alarming && !isActive(st)) continue
+    out.push({
+      entity: ids[i],
+      glyph: entityGlyph(ids[i], st, "", infos ? infos[ids[i]] : null),
+      alarming: alarming,
+      label: entityName(ids[i], st, "") + ": " + stateText(st, infos ? infos[ids[i]] : null)
+    })
+  }
+  return out
+}
+
+// A list setting with one id added or taken out.
+function toggledInList(list, id) {
+  var out = (list || []).slice()
+  var at = out.indexOf(id)
+  if (at >= 0) out.splice(at, 1)
+  else out.push(id)
+  return out
+}
+
+// ----------------------------------------------------------- notifications
+
+// One persistent_notification/subscribe event folded into the map of what is
+// showing. `added` is what is new since the last event — never the batch the
+// subscription opens with, which is the backlog and not news.
+//   { map, added: [notification] }
+function applyNotificationEvent(map, event) {
+  var next = Object.assign({}, map || {})
+  var added = []
+  var kind = event ? event.type : ""
+  var items = event && event.notifications ? event.notifications : {}
+  if (kind === "current") next = {}
+  for (var id in items) {
+    if (kind === "removed") {
+      delete next[id]
+      continue
+    }
+    if (kind === "added" && next[id] === undefined) added.push(items[id])
+    next[id] = items[id]
+  }
+  return { map: next, added: added }
+}
+
+// Newest first.
+function notificationList(map) {
+  var out = []
+  for (var id in map || {}) out.push(map[id])
+  return out.sort(function(a, b) { return String(b.created_at || "").localeCompare(String(a.created_at || "")) })
+}
+
+// The toast for a watched entity that changed: "Front door: Open". Nothing
+// when only its attributes moved.
+function changeNote(entityId, before, after, info) {
+  if (!after || (before && before.state === after.state)) return null
+  if (!before) return null
+  if (NO_VALUE.indexOf(String(after.state)) >= 0 || NO_VALUE.indexOf(String(before.state)) >= 0) return null
+  return {
+    summary: entityName(entityId, after, ""),
+    body: stateText(after, info),
+    critical: isAlarming(after)
+  }
+}
+
+// ------------------------------------------------------------------ assist
+
+// conversation/process -> what to show. A failed intent is still a reply.
+//   { speech, conversationId, error }
+function assistReply(result) {
+  var r = result || {}
+  var response = r.response || {}
+  var speech = response.speech && response.speech.plain ? String(response.speech.plain.speech || "") : ""
+  var error = response.response_type === "error"
+  return {
+    speech: speech !== "" ? speech : (error ? "Sorry, that did not work." : "Done."),
+    conversationId: r.conversation_id ? String(r.conversation_id) : "",
+    error: error
+  }
+}
+
+// The pipeline Assist should use: the one picked in the settings, else HA's
+// preferred one, else the first.
+//   { agent, language, name } or null
+function assistTarget(pipelines, wanted) {
+  var list = pipelines && pipelines.pipelines ? pipelines.pipelines : []
+  if (list.length === 0) return null
+  var preferred = wanted && list.some(function(p) { return p.id === wanted }) ? wanted : pipelines.preferred_pipeline
+  var chosen = list[0]
+  for (var i = 0; i < list.length; i++) if (list[i].id === preferred) chosen = list[i]
+  return { agent: String(chosen.conversation_engine || ""), language: String(chosen.conversation_language || chosen.language || ""),
+    name: String(chosen.name || "") }
+}
+
+// Pipelines as dropdown options; the empty value is "whatever HA prefers".
+function pipelineOptions(pipelines) {
+  var list = pipelines && pipelines.pipelines ? pipelines.pipelines : []
+  var preferred = pipelines ? pipelines.preferred_pipeline : ""
+  var out = [{ value: "", label: "Home Assistant's preferred pipeline" }]
+  for (var i = 0; i < list.length; i++) {
+    out.push({ value: String(list[i].id), label: String(list[i].name || list[i].id)
+      + (list[i].id === preferred ? " (preferred)" : "") })
+  }
+  return out
 }

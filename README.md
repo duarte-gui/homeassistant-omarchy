@@ -4,6 +4,8 @@ Your Home Assistant dashboards in the [Omarchy](https://omarchy.org) bar. Click
 the icon and the dashboard drops down — drawn natively, card by card, with
 every switch, slider, thermostat, alarm keypad and camera working live.
 
+![The panel, on the demo house of tools/mock-ha.py](preview.png)
+
 - **Your real dashboards.** It reads the same Lovelace config the HA frontend
   does, so the cards, titles, views and order are the ones you built. The
   auto-generated Overview (before you ever "took control") is rebuilt from your
@@ -17,8 +19,22 @@ every switch, slider, thermostat, alarm keypad and camera working live.
   timers, counters and to-do lists. Tap any entity for its full controls.
 - **Live.** State changes arrive over Home Assistant's websocket the moment
   they happen — no polling.
-- **Cameras.** Snapshots refresh while the panel is open; the play button opens
-  the live stream in mpv.
+- **Cameras.** Snapshots refresh while the panel is open; the play button turns
+  a card live in place, and a camera's own page starts live. HLS where the
+  camera has it, HA's MJPEG proxy where it does not (Frigate cameras, say). The
+  window button plays it in mpv instead.
+- **History and maps.** history-graph, statistics-graph and graph sensor cards
+  draw their charts; every entity's page has its last 24 hours. Map cards show
+  people and zones on OpenStreetMap, through Home Assistant's own tile proxy.
+  Logbook, energy, statistic and to-do list cards are drawn too.
+- **In the bar.** Pin any entity and its icon sits beside the house while it is
+  on — an armed alarm, an open garage. With nothing pinned, the alarm panels
+  are shown. A dot means Home Assistant has notifications waiting.
+- **Notifications.** Home Assistant's own notifications arrive as desktop
+  toasts, an alarm going off is an urgent one, and any entity can notify you
+  whenever it changes.
+- **Assist.** Type to Home Assistant's conversation agent from the panel (`a`)
+  or from a keybinding, in the language of the pipeline you pick.
 
 ## Install
 
@@ -44,8 +60,9 @@ Then right click the bar icon (or press `s` in the panel) and fill in:
    one.
 
 Requirements: `python3` (standard library only) for the websocket bridge,
-`python-gobject` for error toasts (both ship with Omarchy), and
-`mpv` if you want live camera streams.
+`python-gobject` for notifications, `qt6-multimedia-ffmpeg` for live cameras
+(all three ship with Omarchy), and
+`mpv` if you want camera streams in a window of their own.
 
 To remove it, `omarchy plugin remove io.github.duarte-gui.ha-overview`, or
 `./install.sh --uninstall` from the clone. Either disables the widget first.
@@ -63,10 +80,14 @@ delete it there too: it holds your access token.
 | Right click an entity | always its full controls |
 | Tile icon | toggle |
 | Middle click a camera | live stream in mpv |
+| Middle click a pinned icon in the bar | toggle that entity |
 
 Keys in the panel: `1`–`9` views, `←`/`→` previous/next view, `d`/`D` next/previous
-dashboard, `↑`/`↓` scroll, `s` settings, `r` refresh, `o` open in the browser,
-`Esc` back/close.
+dashboard, `↑`/`↓` scroll, `a` Assist, `n` notifications, `s` settings, `r` refresh,
+`o` open in the browser, `Esc` back/close.
+
+On an entity's page, **Show in the bar** pins it beside the bar icon and
+**Notify me on changes** sends a toast whenever its state changes.
 
 ### From a keybinding or a script
 
@@ -78,6 +99,11 @@ omarchy-shell hass toggleEntity light.desk         # an entity id or friendly na
 omarchy-shell hass call scene.turn_on scene.movie  # any service
 omarchy-shell hass state "Living room temperature"
 omarchy-shell hass moreInfo climate.office         # open that entity's controls
+omarchy-shell hass assist "turn off the kitchen lights"   # the answer comes as a toast
+omarchy-shell hass pin binary_sensor.garage_door   # pin to the bar, or unpin
+omarchy-shell hass watch lock.front_door           # notify on its changes, or stop
+omarchy-shell hass notifications                   # show HA's notifications; prints how many
+omarchy-shell hass chat | last                     # the Assist page | the last notified entity
 omarchy-shell hass dashboards | status | refresh | setup | browser
 ```
 
@@ -99,6 +125,12 @@ Everything lives on the widget's entry in `~/.config/omarchy/shell.json`:
 | `panelHeight` | `860` | height before it scrolls |
 | `cameraRefreshSec` | `10` | camera snapshot refresh, only while open |
 | `notifyErrors` | `true` | toast a failed action when the panel is closed |
+| `barEntities` | alarm panels | entities pinned beside the bar icon |
+| `notifyEntities` | | entities that toast whenever they change |
+| `notifyAlarms` | `true` | an urgent toast when an alarm panel is triggered |
+| `notifyHa` | `true` | Home Assistant's own notifications as toasts |
+| `mapTiles` | `true` | OpenStreetMap tiles on map cards, via HA's tile proxy |
+| `assistPipeline` | HA's preferred | the Assist pipeline, which sets its language |
 
 `dashboard` and `view` are written back by the panel so it reopens where you
 left it.
@@ -113,16 +145,28 @@ lines. The access token reaches it on stdin, never in a command line, where any
 local account could read it from `/proc`. Camera stream URLs reach mpv the same
 way.
 
+Everything else goes over that same socket too: history, statistics, the
+logbook, energy, Assist, notifications. Pictures load from Home Assistant
+directly — camera snapshots and streams through the camera proxy, map tiles
+through HA's `map_tiles` proxy (2026.9 and later), which fetches them from
+OpenStreetMap with the identifying User-Agent OSM requires. So the widget
+talks to nobody but your Home Assistant.
+
+Toasts go to `notify.py` as JSON on stdin, and it calls the notification
+daemon over D-Bus itself, so what a notification says — which door opened —
+never appears in a process's arguments either.
+
 `Model.js` turns a dashboard into a list of blocks once, from its config alone;
 every card then reads live state as it renders, so a state change re-renders
 only the rows it touches.
 
 Card types drawn natively: entities (with section, divider, attribute, weblink,
 text, button and buttons rows, and the header toggle), tile (with its
-features), button, glance, entity, sensor, gauge, light, thermostat,
-humidifier, media-control, alarm-panel, weather-forecast, markdown (templates
-rendered by HA, live), picture-entity, picture-glance, picture, heading, map
-(as a list of people and trackers), grid, vertical-stack, horizontal-stack,
+features), button, glance, entity, sensor (with its graph), gauge, light,
+thermostat, humidifier, media-control, alarm-panel, weather-forecast, markdown
+(templates rendered by HA, live), picture-entity, picture-glance, picture,
+heading, map, history-graph, statistics-graph, statistic, logbook, todo-list,
+the energy cards (as today's totals), grid, vertical-stack, horizontal-stack,
 conditional and sections views, plus `visibility` conditions and view badges.
 Any other card — including custom ones — is shown as a list of the entities it
 mentions, so nothing on a dashboard is out of reach.
@@ -130,12 +174,18 @@ mentions, so nothing on a dashboard is out of reach.
 ## Development
 
 ```bash
-./install.sh --watch   # re-sync on every save; the shell hot-reloads the QML
-node Model.test.js     # the pure logic, no shell needed
+./install.sh --watch      # re-sync on every save; the shell hot-reloads the QML
+node Model.test.js        # the pure logic, no shell needed
+python3 tools/mock-ha.py  # a demo house on 127.0.0.1:8124, no real devices
 ```
 
-Imported `.js` files are not hot-reloaded: after editing `Model.js`, run
-`omarchy restart shell`. `tools/gen-icons.py` regenerates `Icons.js`, the
+Point the widget at the mock (address `127.0.0.1:8124`, any token shaped
+`aaa.bbb.ccc`) to try every control without touching a real house; its
+`/mock/state` and `/mock/notify` endpoints fire state changes and
+notifications from outside. `preview.png` is taken from it.
+
+Imported `.js` files, and `.qml` files added since the shell started, are not
+hot-reloaded: after either, run `omarchy restart shell`. `tools/gen-icons.py` regenerates `Icons.js`, the
 `mdi:` name → Nerd Font codepoint table.
 
 ## License
