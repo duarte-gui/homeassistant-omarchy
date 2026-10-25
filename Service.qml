@@ -59,6 +59,8 @@ Item {
   // Map cards draw on OpenStreetMap tiles from Home Assistant's own tile
   // proxy. Off, a map is a list of who is where.
   readonly property bool mapTiles: setting("mapTiles", true)
+  readonly property string mapTheme: ["auto", "dark", "light"].indexOf(String(setting("mapTheme", "auto"))) >= 0
+    ? String(setting("mapTheme", "auto")) : "auto"
   // The Assist pipeline id; empty is Home Assistant's preferred one.
   readonly property string assistPipeline: String(setting("assistPipeline", ""))
 

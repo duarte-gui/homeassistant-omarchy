@@ -1016,6 +1016,22 @@ Panel {
                 onClicked: if (root.hostWidget) root.hostWidget.setSetting("mapTiles", !checked)
               }
 
+              Dropdown {
+                width: parent.width
+                visible: root.service ? root.service.mapTiles : true
+                label: "Map colours"
+                value: root.service ? root.service.mapTheme : "auto"
+                options: [
+                  { value: "auto", label: "Follow the theme" },
+                  { value: "dark", label: "Dark" },
+                  { value: "light", label: "Light" }
+                ]
+                foreground: root.foreground
+                accent: root.urgent
+                fontFamily: root.fontFamily
+                onChanged: function(value) { if (root.hostWidget) root.hostWidget.setSetting("mapTheme", value === "auto" ? null : value) }
+              }
+
               Item { width: 1; height: Style.spacing.lg }
 
               PanelSectionHeader {

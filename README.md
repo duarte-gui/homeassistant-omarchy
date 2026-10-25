@@ -25,7 +25,8 @@ every switch, slider, thermostat, alarm keypad and camera working live.
   window button plays it in mpv instead.
 - **History and maps.** history-graph, statistics-graph and graph sensor cards
   draw their charts; every entity's page has its last 24 hours. Map cards show
-  people and zones on OpenStreetMap, through Home Assistant's own tile proxy.
+  people and zones on OpenStreetMap, through Home Assistant's own tile proxy —
+  dark in a dark theme; the wheel zooms.
   Logbook, energy, statistic and to-do list cards are drawn too.
 - **In the bar.** Pin any entity and its icon sits beside the house while it is
   on — an armed alarm, an open garage. With nothing pinned, the alarm panels
@@ -81,6 +82,7 @@ delete it there too: it holds your access token.
 | Tile icon | toggle |
 | Middle click a camera | live stream in mpv |
 | Middle click a pinned icon in the bar | toggle that entity |
+| Wheel / drag on a map | zoom / pan |
 
 Keys in the panel: `1`–`9` views, `←`/`→` previous/next view, `d`/`D` next/previous
 dashboard, `↑`/`↓` scroll, `a` Assist, `n` notifications, `s` settings, `r` refresh,
@@ -130,6 +132,7 @@ Everything lives on the widget's entry in `~/.config/omarchy/shell.json`:
 | `notifyAlarms` | `true` | an urgent toast when an alarm panel is triggered |
 | `notifyHa` | `true` | Home Assistant's own notifications as toasts |
 | `mapTiles` | `true` | OpenStreetMap tiles on map cards, via HA's tile proxy |
+| `mapTheme` | `auto` | map colours: `auto` follows the theme, or `dark`, `light` |
 | `assistPipeline` | HA's preferred | the Assist pipeline, which sets its language |
 
 `dashboard` and `view` are written back by the panel so it reopens where you

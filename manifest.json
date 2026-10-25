@@ -2,7 +2,7 @@
   "schemaVersion": 1,
   "id": "io.github.duarte-gui.ha-overview",
   "name": "HA Overview",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "author": "duarte-gui",
   "license": "MIT",
   "description": "Your Home Assistant dashboards in the Omarchy bar: click the icon and the dashboard drops down, drawn natively card by card — switches, sliders, thermostats, alarm keypads, live cameras, history graphs and maps — with Assist and Home Assistant's notifications alongside.",
@@ -39,6 +39,7 @@
       "notifyAlarms": true,
       "notifyHa": true,
       "mapTiles": true,
+      "mapTheme": "auto",
       "assistPipeline": ""
     },
     "schema": [
@@ -144,6 +145,14 @@
         "label": "Map tiles",
         "defaultValue": true,
         "description": "Draw map cards on OpenStreetMap tiles, which Home Assistant itself fetches and caches (its map_tiles proxy, 2026.9 and later), so the map talks only to Home Assistant. Off, a map card is a list of who is where."
+      },
+      {
+        "key": "mapTheme",
+        "type": "enum",
+        "label": "Map colours",
+        "options": ["auto", "dark", "light"],
+        "defaultValue": "auto",
+        "description": "auto draws the map dark in a dark Omarchy theme and light in a light one; dark and light always do."
       },
       {
         "key": "assistPipeline",

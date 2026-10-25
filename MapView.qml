@@ -13,8 +13,10 @@ import "Model.js" as Model
 // and is asked for again well before it lapses. Tiles are plain Images on a
 // Web Mercator grid — no QtLocation, which the shell does not ship.
 //
-// Drag to pan, Ctrl+wheel or the buttons to zoom; the wheel alone keeps
-// scrolling the panel.
+// In a dark theme the tiles go dark too: a shader inverts their lightness and
+// keeps their hue, as Home Assistant's frontend does, over the panel's colour.
+//
+// Drag to pan; the wheel, a double click or the buttons zoom.
 Item {
   id: view
 
@@ -28,9 +30,11 @@ Item {
   readonly property color dim: host ? host.dim : Qt.darker(Color.foreground, 1.55)
   readonly property color accent: host ? host.accent : Color.accent
   readonly property string fontFamily: host ? host.fontFamily : Style.font.family
-  // A light foreground means a dark theme, where the bright OSM tiles are
-  // dimmed to sit with the rest of the panel.
-  readonly property bool darkTiles: (foreground.r * 0.3 + foreground.g * 0.59 + foreground.b * 0.11) > 0.5
+  // "auto" follows the theme: a light foreground means a dark one.
+  readonly property string mapTheme: service ? service.mapTheme : "auto"
+  readonly property bool darkTiles: mapTheme === "dark"
+    || (mapTheme !== "light" && (foreground.r * 0.3 + foreground.g * 0.59 + foreground.b * 0.11) > 0.5)
+  readonly property color background: Color.popups.background
   readonly property bool opened: host ? host.opened === true : false
 
   property string tileToken: ""
@@ -44,6 +48,9 @@ Item {
   property real centerX: 2
   property real centerY: 2
   property bool userMoved: false
+  // Wheel travel not yet spent on a zoom step: a mouse notch is 120, a
+  // touchpad sends many small deltas.
+  property real wheelTravel: 0
 
   implicitHeight: Math.round(width * aspect)
   clip: true
@@ -128,27 +135,30 @@ Item {
 
   Rectangle {
     anchors.fill: parent
-    color: view.darkTiles ? "#1b1d22" : "#e8e4dc"
+    color: view.darkTiles ? Qt.rgba(view.background.r, view.background.g, view.background.b, 1) : "#e8e4dc"
   }
 
-  Repeater {
-    model: view.tiles
-    Image {
-      required property var modelData
-      x: Math.round(modelData.x)
-      y: Math.round(modelData.y)
-      width: view.tileSize
-      height: view.tileSize
-      source: modelData.url
-      asynchronous: true
-      smooth: true
-    }
-  }
-
-  Rectangle {
+  Item {
     anchors.fill: parent
-    visible: view.darkTiles && view.tileToken !== ""
-    color: Qt.rgba(0.05, 0.06, 0.08, 0.35)
+    layer.enabled: view.darkTiles
+    layer.effect: ShaderEffect {
+      property color background: Qt.rgba(view.background.r, view.background.g, view.background.b, 1)
+      fragmentShader: Qt.resolvedUrl("shaders/darkmap.frag.qsb")
+    }
+
+    Repeater {
+      model: view.tiles
+      Image {
+        required property var modelData
+        x: Math.round(modelData.x)
+        y: Math.round(modelData.y)
+        width: view.tileSize
+        height: view.tileSize
+        source: modelData.url
+        asynchronous: true
+        smooth: true
+      }
+    }
   }
 
   // ---- zones and accuracy circles
@@ -274,7 +284,7 @@ Item {
     }
   }
 
-  // ---- panning; Ctrl+wheel zooms
+  // ---- panning and zooming
   MouseArea {
     id: panArea
     anchors.fill: parent
@@ -294,11 +304,15 @@ Item {
     }
     onDoubleClicked: function(mouse) { view.zoomBy(1, mouse.x, mouse.y) }
     onWheel: function(wheel) {
-      if (!(wheel.modifiers & Qt.ControlModifier)) {
-        wheel.accepted = false
-        return
+      var delta = wheel.angleDelta.y !== 0 ? wheel.angleDelta.y : wheel.pixelDelta.y * 4
+      // Turning the other way drops what was gathered the first way.
+      if (delta * view.wheelTravel < 0) view.wheelTravel = 0
+      view.wheelTravel += delta
+      while (Math.abs(view.wheelTravel) >= 120) {
+        var step = view.wheelTravel > 0 ? 1 : -1
+        view.wheelTravel -= step * 120
+        view.zoomBy(step, wheel.x, wheel.y)
       }
-      view.zoomBy(wheel.angleDelta.y > 0 ? 1 : -1, wheel.x, wheel.y)
     }
   }
 
