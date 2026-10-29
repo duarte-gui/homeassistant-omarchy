@@ -57,7 +57,9 @@ Then right click the bar icon (or press `s` in the panel) and fill in:
 1. **Home Assistant address** — an IP such as `192.168.1.10`, a hostname such
    as `homeassistant.local`, or a full URL. A bare IP or hostname gets port 8123.
 2. **Access token** — in Home Assistant, open your profile → *Security* →
-   *Long-lived access tokens* → *Create token*, and paste it.
+   *Long-lived access tokens* → *Create token*, and paste it. It is saved in
+   `~/.config/ha-overview/token`, readable only by you (mode `0600` in a `0700`
+   folder), not in `shell.json`.
 3. **Dashboards in the dropdown** — every dashboard is listed until you untick
    one.
 
@@ -68,8 +70,9 @@ Requirements: `python3` (standard library only) for the websocket bridge,
 
 To remove it, `omarchy plugin remove io.github.duarte-gui.ha-overview`, or
 `./install.sh --uninstall` from the clone. Either disables the widget first.
-If the widget's entry is still in `~/.config/omarchy/shell.json` afterwards,
-delete it there too: it holds your access token.
+`./install.sh --uninstall` also deletes the saved token; after
+`omarchy plugin remove`, delete it yourself with `rm -r ~/.config/ha-overview`.
+You may also want to revoke the token in Home Assistant (profile → *Security*).
 
 ## Using it
 
@@ -116,12 +119,12 @@ camera stream window.
 
 ## Settings
 
-Everything lives on the widget's entry in `~/.config/omarchy/shell.json`:
+Everything lives on the widget's entry in `~/.config/omarchy/shell.json`,
+except the access token, which is kept apart (see below):
 
 | Key | Default | |
 |---|---|---|
 | `haUrl` | `http://homeassistant.local:8123` | where Home Assistant is |
-| `token` | | long-lived access token |
 | `dashboards` | all | url_paths listed in the dropdown |
 | `columns` | `2` | card columns |
 | `panelWidth` | `760` | dropdown width in px |
@@ -146,7 +149,13 @@ themselves (`lovelace/config`), the registries and the stream of state changes
 are only served there, and the shell has no websocket module. It speaks the
 protocol with the Python standard library and talks to the widget in JSON
 lines. The access token reaches it on stdin, never in a command line, where any
-local account could read it from `/proc`. Camera stream URLs reach mpv the same
+local account could read it from `/proc`. The bridge also owns where the token
+is kept: `~/.config/ha-overview/token`, written atomically with mode `0600` in a
+`0700` directory, never following a symlink, and only read back when it is a
+regular file of yours. `shell.json` is written by the shell with whatever
+permissions it already has, so the token stays out of it; one left there by
+version 0.2.2 or earlier is moved into the private file on the first start and
+then removed from `shell.json`. Camera stream URLs reach mpv the same
 way.
 
 Everything else goes over that same socket too: history, statistics, the

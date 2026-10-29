@@ -69,6 +69,8 @@ BarWidget {
     settings: root.settings
     panelOpen: root.opened
     leader: root.isLeader
+    // The bridge saved the token from shell.json privately; drop it from there.
+    onTokenMigrated: root.setSettings({ token: null })
   }
 
   // --------------------------------------------------------------- actions
@@ -82,11 +84,34 @@ BarWidget {
     setSettings(changes)
   }
 
+  // Our entry as the shell last persisted it, found in its detached bar config.
+  function persistedEntry() {
+    function find(node) {
+      if (!node || typeof node !== "object") return null
+      if (!Array.isArray(node) && node.id === root.moduleName) return node
+      for (var k in node) {
+        var hit = find(node[k])
+        if (hit) return hit
+      }
+      return null
+    }
+    return find(bar && bar.shell ? bar.shell.barConfig : null) || {}
+  }
+
   // Several keys in one write. A null removes the key, which hands it back to
   // its fallback in Service.qml.
+  //
+  // updateEntryInline replaces the whole entry, so it is rebuilt from what the
+  // shell persisted plus our local copy: root.settings alone can be incomplete
+  // right after a plugin reload, and a write then would drop the address.
   function setSettings(changes) {
     var entry = { id: root.moduleName }
-    for (var name in root.settings) {
+    var saved = persistedEntry()
+    var name
+    for (name in saved) {
+      if (name !== "id") entry[name] = saved[name]
+    }
+    for (name in root.settings) {
       if (name !== "id") entry[name] = root.settings[name]
     }
     for (var key in changes) {

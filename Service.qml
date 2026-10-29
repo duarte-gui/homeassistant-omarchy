@@ -37,7 +37,16 @@ Item {
   // A bare IP is accepted here too, so a hand-edited "192.168.1.10" in
   // shell.json works the same as one typed into the panel.
   readonly property string haUrl: Model.normalizeHaUrl(setting("haUrl", "http://homeassistant.local:8123"))
-  readonly property string token: String(setting("token", "")).trim()
+  // The token is not a setting any more: bridge.py keeps it in a private file
+  // (see the top of bridge.py). A token still in shell.json, from an older
+  // version or a hand edit, is handed to the bridge once and then removed.
+  readonly property string legacyToken: String(setting("token", "")).trim()
+  // A token typed in the panel, held only until the bridge confirms it saved it.
+  property string pendingToken: ""
+  // What the bridge last said: -1 not asked yet, 0 no token saved, 1 saved.
+  property int tokenStatus: -1
+  readonly property bool hasToken: tokenStatus !== 0 || pendingToken !== "" || legacyToken !== ""
+  signal tokenMigrated()
   // Absent or empty means every dashboard goes in the dropdown.
   readonly property var dashboardPicks: Model.splitList(setting("dashboards", ""))
   readonly property string dashboardSetting: String(setting("dashboard", ""))
@@ -122,8 +131,10 @@ Item {
   property var assistPipelines: null
 
   readonly property bool online: connectionState === "connected"
-  readonly property bool configured: haUrl !== "" && token !== ""
-  readonly property bool shouldRun: configured && (leader || panelOpen)
+  readonly property bool configured: haUrl !== "" && hasToken
+  // The bridge runs as soon as there is an address: it is the one that knows
+  // whether a token is saved.
+  readonly property bool shouldRun: haUrl !== "" && (leader || panelOpen)
 
   readonly property var dashboardOptions: Model.dashboardOptions(panels)
   readonly property var dashboards: Model.visibleDashboards(dashboardOptions, dashboardPicks)
@@ -145,7 +156,12 @@ Item {
     decodeURIComponent(String(Qt.resolvedUrl("notify.py")).replace(/^file:\/\//, ""))
 
   onHaUrlChanged: reconnect()
-  onTokenChanged: reconnect()
+  onLegacyTokenChanged: if (legacyToken !== "") reconnect()
+
+  function setToken(value) {
+    pendingToken = String(value || "").trim()
+    if (pendingToken !== "") reconnect()
+  }
   onShouldRunChanged: {
     if (shouldRun) startBridge()
     else stopBridge()
@@ -224,7 +240,11 @@ Item {
     for (var i = 0; i < dashboards.length; i++) wanted.push(dashboards[i].value)
     if (dashboardSetting !== "" && wanted.indexOf(dashboardSetting) < 0) wanted.push(dashboardSetting)
     if (wanted.length === 0) wanted.push("lovelace")
-    return JSON.stringify({ type: "connect", url: haUrl, token: token, dashboards: wanted }) + "\n"
+    var line = { type: "connect", url: haUrl, dashboards: wanted }
+    // Only a new token travels; the bridge reads a saved one from its file.
+    var fresh = pendingToken !== "" ? pendingToken : legacyToken
+    if (fresh !== "") line.token = fresh
+    return JSON.stringify(line) + "\n"
   }
 
   function loadDashboard(name) {
@@ -503,6 +523,13 @@ Item {
     }
 
     switch (message.type) {
+    case "token":
+      tokenStatus = message.stored ? 1 : 0
+      if (message.saved) {
+        pendingToken = ""
+        if (legacyToken !== "") tokenMigrated()
+      }
+      break
     case "status":
       connectionState = message.state
       connectionMessage = String(message.message || "")
@@ -600,7 +627,7 @@ Item {
   // -------------------------------------------------------------- bridge
 
   function startBridge() {
-    if (!configured) {
+    if (haUrl === "") {
       connectionState = "no_token"
       return
     }
@@ -631,7 +658,7 @@ Item {
     stateRevision++
     everConnected = false
     imageBase = ""
-    if (!configured) {
+    if (haUrl === "") {
       stopBridge()
       return
     }
@@ -655,7 +682,7 @@ Item {
     }
     stderr: StdioCollector { id: bridgeErrors; waitForEnd: true }
 
-    // The token goes on stdin, never in argv: a process's arguments are
+    // A token goes on stdin, never in argv: a process's arguments are
     // readable by every local account through /proc.
     onStarted: write(service.connectLine())
 

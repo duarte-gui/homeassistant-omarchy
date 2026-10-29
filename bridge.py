@@ -8,11 +8,15 @@ state changes that keeps every control honest. qt6-websockets is not part of
 the shell, so this process speaks the protocol with the standard library and
 the widget talks to it in JSON lines.
 
-The access token arrives as the first line on stdin, never in argv: a process's
-arguments are readable by every local account through /proc/<pid>/cmdline, and
-a long-lived token is the keys to the house.
+A long-lived token is the keys to the house, so it is kept out of everything
+another local account can read. It never goes in argv (/proc/<pid>/cmdline is
+world-readable), and it is not kept in shell.json, whose permissions the shell
+does not control. This process owns it instead: a token the widget passes on
+stdin is written to ~/.config/ha-overview/token (mode 0600, in a 0700
+directory), and a connect line without one reads it back from there.
 
     stdin   {"type": "connect", "url": "http://ha.local:8123", "token": "..."}
+            ("token" only when there is a new one to keep; omit it to use the saved one)
             {"type": "lovelace", "dashboard": "lovelace"}
             {"type": "call", "id": 7, "domain": "light", "service": "toggle",
              "data": {...}, "target": {"entity_id": "light.desk"}}
@@ -21,7 +25,8 @@ a long-lived token is the keys to the house.
             {"type": "unsubscribe", "key": "md-3"}
             {"type": "request", "id": 9, "message": {"type": "camera/stream", ...}}
 
-    stdout  {"type": "status", "state": "connecting|connected|auth_invalid|error", ...}
+    stdout  {"type": "status", "state": "connecting|connected|auth_invalid|no_token|error", ...}
+            {"type": "token", "stored": true|false, "saved": true|false}
             {"type": "config" | "panels" | "registry" | "lovelace" | "states" | "delta"
                      | "result" | "response" | "subscription" | "user", ...}
 """
@@ -32,6 +37,7 @@ import os
 import queue
 import socket
 import ssl
+import stat
 import struct
 import sys
 import threading
@@ -50,6 +56,59 @@ MAX_HANDSHAKE = 64 * 1024
 out_lock = threading.Lock()
 
 
+TOKEN_DIR = os.path.join(os.environ.get("XDG_CONFIG_HOME") or os.path.expanduser("~/.config"), "ha-overview")
+TOKEN_FILE = os.path.join(TOKEN_DIR, "token")
+TOKEN_MAX_BYTES = 8192
+
+
+def private_token_dir():
+    """The token's directory, created 0700, refused if it is not ours."""
+    os.makedirs(TOKEN_DIR, mode=0o700, exist_ok=True)
+    info = os.lstat(TOKEN_DIR)
+    if not stat.S_ISDIR(info.st_mode) or info.st_uid != os.getuid():
+        raise PermissionError("%s is not a directory owned by you" % TOKEN_DIR)
+    if stat.S_IMODE(info.st_mode) != 0o700:
+        os.chmod(TOKEN_DIR, 0o700)
+
+
+def load_token():
+    try:
+        fd = os.open(TOKEN_FILE, os.O_RDONLY | os.O_NOFOLLOW | os.O_CLOEXEC)
+    except OSError:
+        return ""
+    with os.fdopen(fd, "rb") as handle:
+        info = os.fstat(handle.fileno())
+        # Only a regular file of ours; anything else may have been planted.
+        if not stat.S_ISREG(info.st_mode) or info.st_uid != os.getuid():
+            return ""
+        if stat.S_IMODE(info.st_mode) & 0o077:
+            os.fchmod(handle.fileno(), 0o600)
+        return handle.read(TOKEN_MAX_BYTES).decode("utf-8", "replace").strip()
+
+
+def save_token(token):
+    """Write the token atomically, readable by nobody else at any point."""
+    private_token_dir()
+    temp = os.path.join(TOKEN_DIR, ".token.%d" % os.getpid())
+    try:
+        os.unlink(temp)
+    except FileNotFoundError:
+        pass
+    fd = os.open(temp, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW | os.O_CLOEXEC, 0o600)
+    try:
+        with os.fdopen(fd, "wb") as handle:
+            handle.write(token.encode("utf-8"))
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.replace(temp, TOKEN_FILE)
+    except BaseException:
+        try:
+            os.unlink(temp)
+        except OSError:
+            pass
+        raise
+
+
 def emit(message):
     line = json.dumps(message, separators=(",", ":"), ensure_ascii=False)
     with out_lock:
@@ -62,6 +121,10 @@ def status(state, message=""):
 
 
 class Closed(Exception):
+    pass
+
+
+class NoToken(Exception):
     pass
 
 
@@ -420,6 +483,8 @@ class Bridge:
     # ----------------------------------------------------------- lifecycle
 
     def connect(self):
+        if not self.token:
+            raise NoToken()
         status("connecting")
         ws = WebSocket(self.url)
         hello = ws.recv()
@@ -480,6 +545,10 @@ class Bridge:
                 # A wrong token does not get better by retrying every second.
                 self.wait_for_new_connect()
                 continue
+            except NoToken:
+                status("no_token")
+                self.wait_for_new_connect()
+                continue
             except (OSError, Closed, ValueError) as error:
                 status("error", describe(error))
             finally:
@@ -495,6 +564,21 @@ class Bridge:
         while time.monotonic() < deadline and not self.stopping:
             time.sleep(0.1)
 
+    def take_token(self, command):
+        """A token on the connect line is new: keep it. Otherwise use the saved one."""
+        token = str(command.get("token", "") or "").strip()
+        saved = False
+        if token:
+            try:
+                save_token(token)
+                saved = True
+            except OSError as error:
+                status("error", "could not save the token: %s" % error.strerror)
+            self.token = token
+        else:
+            self.token = load_token()
+        emit({"type": "token", "stored": bool(self.token), "saved": saved})
+
     def wait_for_new_connect(self):
         self.reconnect_requested = False
         while not self.stopping and not self.reconnect_requested:
@@ -508,7 +592,7 @@ class Bridge:
                 continue
             if command.get("type") == "connect":
                 self.url = str(command.get("url", "")).rstrip("/")
-                self.token = str(command.get("token", ""))
+                self.take_token(command)
                 self.reconnect_requested = True
                 if self.ws:
                     # Dropping the socket makes serve() fail and reconnect with
@@ -615,7 +699,7 @@ def main():
         status("error", "no connect line")
         return 2
     bridge.url = str(command.get("url", "")).rstrip("/")
-    bridge.token = str(command.get("token", ""))
+    bridge.take_token(command)
     bridge.reconnect_requested = False
     for dashboard in command.get("dashboards") or []:
         bridge.wanted_dashboards.add(str(dashboard))

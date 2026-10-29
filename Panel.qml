@@ -323,7 +323,8 @@ Panel {
       return false
     }
     root.tokenError = ""
-    hostWidget.setSetting("token", token)
+    // Straight to the bridge, which saves it privately; never into shell.json.
+    service.setToken(token)
     tokenField.text = ""
     return true
   }
@@ -843,7 +844,7 @@ Panel {
                 width: parent.width
                 password: true
                 echoMode: TextInput.Password
-                placeholderText: root.service && root.service.token !== ""
+                placeholderText: root.service && root.service.tokenStatus === 1
                   ? "Saved. Paste a new one to replace it."
                   : "Paste a long-lived access token"
                 foreground: root.foreground

@@ -5,7 +5,7 @@
 #   ./install.sh              sync, validate, rescan, and enable on first run
 #   ./install.sh --enable     force the bar placement even if already installed
 #   ./install.sh --watch      dev loop: re-sync on every save so the shell hot-reloads
-#   ./install.sh --uninstall  disable, then remove the installed copy
+#   ./install.sh --uninstall  disable, then remove the installed copy and the saved token
 #   ./install.sh --force      overwrite an install that omarchy plugin add made
 #
 # The shell only watches real files under ~/.config/omarchy/plugins, and
@@ -76,8 +76,10 @@ case "$MODE" in
 uninstall)
   omarchy plugin disable "$ID" >/dev/null 2>&1 || true
   rm -rf "$DEST"
+  # The access token lives apart from the plugin and from shell.json (see bridge.py).
+  rm -rf "${XDG_CONFIG_HOME:-$HOME/.config}/ha-overview"
   omarchy-shell shell rescanPlugins >/dev/null 2>&1 || true
-  echo "removed $ID"
+  echo "removed $ID (and its saved access token)"
   exit 0
   ;;
 
